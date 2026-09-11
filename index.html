@@ -765,6 +765,22 @@
 .framer-7vyq9x,
 .framer-fvs9y6,
 .framer-16kg4eb { display: none !important; }
+</style><style id="tr-genis-ekran">
+/* Sablon icerigi 1500px'te sabit; genis ekranda iki yanda beyaz bant kaliyordu.
+   Govde arka planini sablonun kendi mobil gradyaniyla ayni yapiyoruz ki
+   bantlar cerceve gibi dursun. background-attachment:fixed -> 10000px'lik
+   sayfada gradyan tekrar etmesin. */
+@media (min-width: 810px) {
+  html body {
+    /* Duz koyu "paspartu": gradyan ekrana sabitlendiginde altta acik yesile
+       donuyor ve sanatin koyu mavisiyle cakisiyordu. Duz renk her kaydirma
+       konumunda tutarli duruyor. */
+    background: rgb(2, 41, 56) !important;
+  }
+  /* Framer kok elemani tam genislikte BEYAZ boyuyor ve govde gradyanini
+     ortuyordu; seffaflastirinca yan bantlarda gradyan gorunuyor. */
+  [data-framer-root] { background: transparent !important; }
+}
 </style></head>
 <body>
 	
@@ -864,8 +880,8 @@
       dolu.push(nokta[m]);
       if (m + 1 < nokta.length) {
         var bosluk = nokta[m + 1] - nokta[m];
-        if (bosluk > vh * 0.55) {
-          var adet = Math.ceil(bosluk / (vh * 0.55)) - 1;
+        if (bosluk > vh * 1.6) {
+          var adet = Math.ceil(bosluk / (vh * 1.1)) - 1;
           for (var q = 1; q <= adet; q++) dolu.push(Math.round(nokta[m] + bosluk * q / (adet + 1)));
         }
       }
