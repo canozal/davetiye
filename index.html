@@ -797,4 +797,138 @@
     <!-- End of bodyEnd -->
 
 
-<iframe id="__framer-editorbar" src="./assets/edit.html" aria-hidden="true" allow="autoplay" tabindex="-1" class="status_hidden"></iframe></body></html>
+<iframe id="__framer-editorbar" src="./assets/edit.html" aria-hidden="true" allow="autoplay" tabindex="-1" class="status_hidden"></iframe><script id="tr-smooth-scroll">
+/* Yumusak kaydirma (smooth scroll) + bolum dikislerine oturma (snap).
+
+   Sablonun kendi Lenis bileseni statik export'ta hic baslamiyor; asagidaki RAF
+   dongusu ayni isi goruyor. window.scrollTo kullandigi icin tarayici normal
+   scroll olaylarini uretmeye devam eder -> Framer'in parallax ve "gorununce
+   beliren" animasyonlari bozulmadan calisir.
+
+   Snap: sayfa 4 bolumden olusuyor; bolumlerin birlestigi yerde gorunur bir
+   dikis cizgisi var. Kaydirma durunca en yakin dikis YAKINLIK mesafesi
+   icindeyse oraya oturulur, boylece cizgi ekranin ortasinda asili kalmaz.
+   Bolumler ekran boyunun ~3 kati oldugu icin bilerek "her harekette bir bolum"
+   yapilmadi; oyle olsaydi metinler okunamadan atlanirdi.
+
+   Ayarlar:  EASE     kucuk = daha uzun/akici, buyuk = daha sert
+             YAKINLIK dikise bu oranda yaklasinca oturur (ekran yuksekligi cinsinden)
+             BEKLE    kaydirma durduktan kac ms sonra otursun
+   Kapatmak icin bu <script> blogunu silmek yeterli. */
+(function () {
+  var EASE = 0.11, YAKINLIK = 0.4, BEKLE = 140;
+  var CANLI = 250;  // dongunun "saglikli" sayilacagi son kare yasi (ms)
+
+  // Dokunmatik cihazlarda isletim sisteminin kendi momentumu daha iyi; karisma.
+  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+  // Hareket azaltma tercihi acik olan kullanicilara dokunma.
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  var hedef = window.scrollY, simdi = window.scrollY;
+  var calisiyor = false, sonKare = 0, jeton = 0, oturZaman = null;
+
+  // Sekme arka plandayken requestAnimationFrame durur. O sirada bir kaydirma
+  // baslamissa dongu yarida kalir ve calisiyor=true takili kalirdi; bu da
+  // smooth scroll'u kalici olarak oldururdu. Bu yuzden "canli mi" diye
+  // son karenin yasina bakiyoruz.
+  function canli() { return calisiyor && (performance.now() - sonKare < CANLI); }
+
+  function enFazla() {
+    return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  }
+  function sinirla(v) { return Math.min(enFazla(), Math.max(0, v)); }
+
+  // Dikis cizgileri = bolumlerin baslangic y konumlari (+ sayfa basi ve sonu).
+  function dikisler() {
+    var d = [0], b = document.querySelectorAll('[data-framer-name^="Section"]');
+    for (var i = 0; i < b.length; i++) d.push(Math.round(b[i].getBoundingClientRect().top + window.scrollY));
+    d.push(enFazla());
+    return d;
+  }
+  function enYakinDikis(y) {
+    var d = dikisler(), en = null, enFark = Infinity;
+    for (var i = 0; i < d.length; i++) {
+      var f = Math.abs(d[i] - y);
+      if (f < enFark) { enFark = f; en = d[i]; }
+    }
+    return { konum: en, fark: enFark };
+  }
+
+  function dongu(benim) {
+    if (benim !== jeton) return;            // donmus/eski dongu: sessizce bitsin
+    sonKare = performance.now();
+    // Gec yuklenen gorseller sayfa boyunu degistirebilir; hedefi her karede
+    // yeniden sinirla ki en dibe kadar gidebilelim.
+    hedef = sinirla(hedef);
+    var fark = hedef - simdi;
+    // 1px altindaki fark gozle gorulmez; kuyrukta suruklenmemek icin oraya oturt.
+    if (Math.abs(fark) < 1) {
+      simdi = hedef; window.scrollTo(0, simdi);
+      calisiyor = false; oturPlanla(); return;
+    }
+    simdi += fark * EASE;
+    window.scrollTo(0, simdi);
+    requestAnimationFrame(function () { dongu(benim); });
+  }
+
+  function baslat() {
+    if (canli()) return;                    // zaten saglikli donuyor
+    calisiyor = true; sonKare = performance.now();
+    var j = ++jeton;                        // eski donguleri gecersiz kil
+    requestAnimationFrame(function () { dongu(j); });
+  }
+
+  function otur() {
+    if (canli()) return;
+    var y = window.scrollY, e = enYakinDikis(y);
+    if (e.konum === null) return;
+    if (e.fark > 0.5 && e.fark <= window.innerHeight * YAKINLIK) {
+      simdi = y; hedef = sinirla(e.konum); baslat();
+    }
+  }
+  function oturPlanla() { clearTimeout(oturZaman); oturZaman = setTimeout(otur, BEKLE); }
+
+  // Kendi icinde kayan bir alanin (ornegin tasan bir kutu) uzerindeysek karisma.
+  function kendiKayanAlan(el) {
+    while (el && el.nodeType === 1 && el !== document.body && el !== document.documentElement) {
+      if (el.hasAttribute('data-lenis-prevent')) return true;
+      var st = getComputedStyle(el);
+      if (/(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 1) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+
+  window.addEventListener('wheel', function (e) {
+    if (e.ctrlKey) return;                            // pinch-zoom'a dokunma
+    if (kendiKayanAlan(e.target)) return;
+    e.preventDefault();
+    clearTimeout(oturZaman);
+
+    var dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16;                      // satir birimi
+    else if (e.deltaMode === 2) dy *= window.innerHeight; // sayfa birimi
+
+    if (!canli()) { simdi = window.scrollY; hedef = simdi; }
+    hedef = sinirla(hedef + dy);
+    baslat();
+    oturPlanla();
+  }, { passive: false });
+
+  // Klavye / kaydirma cubugu ile kaydirildiginda da dikise otur.
+  window.addEventListener('scroll', function () { if (!canli()) oturPlanla(); }, { passive: true });
+
+  ['keydown', 'mousedown', 'touchstart'].forEach(function (t) {
+    window.addEventListener(t, function () { if (!canli()) { hedef = simdi = window.scrollY; } }, { passive: true });
+  });
+  window.addEventListener('resize', function () { jeton++; calisiyor = false; hedef = simdi = window.scrollY; });
+
+  // Sekmeye geri donuldugunde yarim kalmis dongulerden temizlen.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') {
+      jeton++; calisiyor = false; hedef = simdi = window.scrollY;
+    }
+  });
+})();
+</script>
+</body></html>
