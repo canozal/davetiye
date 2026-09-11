@@ -798,137 +798,112 @@
 
 
 <iframe id="__framer-editorbar" src="./assets/edit.html" aria-hidden="true" allow="autoplay" tabindex="-1" class="status_hidden"></iframe><script id="tr-smooth-scroll">
-/* Yumusak kaydirma (smooth scroll) + bolum dikislerine oturma (snap).
+/* Sayfalama (scroll snap) + yumusak kaydirma.
 
-   Sablonun kendi Lenis bileseni statik export'ta hic baslamiyor; asagidaki RAF
-   dongusu ayni isi goruyor. window.scrollTo kullandigi icin tarayici normal
-   scroll olaylarini uretmeye devam eder -> Framer'in parallax ve "gorununce
-   beliren" animasyonlari bozulmadan calisir.
+   Tarayicinin KENDI scroll-snap'ini kullaniyoruz. Onceki denemede tekerlek
+   olayini JS ile ele gecirip kendi animasyonumuzu surmustuk; calisiyordu ama
+   kirilgandi: sekme arka plana alininca requestAnimationFrame duruyor, dongu
+   yarida kaliyor ve kaydirma tamamen kilitleniyordu. CSS snap'te bu risk yok,
+   ayrica dokunmatikte / klavyede / kaydirma cubugunda da ayni sekilde calisir.
 
-   Snap: sayfa 4 bolumden olusuyor; bolumlerin birlestigi yerde gorunur bir
-   dikis cizgisi var. Kaydirma durunca en yakin dikis YAKINLIK mesafesi
-   icindeyse oraya oturulur, boylece cizgi ekranin ortasinda asili kalmaz.
-   Bolumler ekran boyunun ~3 kati oldugu icin bilerek "her harekette bir bolum"
-   yapilmadi; oyle olsaydi metinler okunamadan atlanirdi.
+   Nasil: sayfadaki iri basliklardan "sahne" konumlari hesaplanir (hero,
+   davetiye, her etkinlik karti, Yol tarifi, Gelin & Damat, RSVP, Bilmeniz
+   Gerekenler kartlari, Anlari Takip Edin, Geri Sayim). Her sahne icin sayfaya
+   gorunmez 1px'lik bir isaretci konur; scroll-snap-align sayesinde tarayici
+   kaydirmayi bu noktalara oturtur.
 
-   Ayarlar:  EASE     kucuk = daha uzun/akici, buyuk = daha sert
-             YAKINLIK dikise bu oranda yaklasinca oturur (ekran yuksekligi cinsinden)
-             BEKLE    kaydirma durduktan kac ms sonra otursun
+   "proximity" bilerek secildi: "mandatory" olsaydi iki sahne arasindaki uzun
+   metinlerde okurken surekli geri cekilirdi.
    Kapatmak icin bu <script> blogunu silmek yeterli. */
 (function () {
-  var EASE = 0.11, YAKINLIK = 0.4, BEKLE = 140;
-  var CANLI = 250;  // dongunun "saglikli" sayilacagi son kare yasi (ms)
+  var MIN_FONT = 40;     // "iri baslik" esigi
+  var GRUP = 220;        // bu kadar yakin basliklar tek sahne sayilir
+  var ID = 'tr-snap-katman';
 
-  // Dokunmatik cihazlarda isletim sisteminin kendi momentumu daha iyi; karisma.
-  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
-  // Hareket azaltma tercihi acik olan kullanicilara dokunma.
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-
-  var hedef = window.scrollY, simdi = window.scrollY;
-  var calisiyor = false, sonKare = 0, jeton = 0, oturZaman = null;
-
-  // Sekme arka plandayken requestAnimationFrame durur. O sirada bir kaydirma
-  // baslamissa dongu yarida kalir ve calisiyor=true takili kalirdi; bu da
-  // smooth scroll'u kalici olarak oldururdu. Bu yuzden "canli mi" diye
-  // son karenin yasina bakiyoruz.
-  function canli() { return calisiyor && (performance.now() - sonKare < CANLI); }
 
   function enFazla() {
     return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
   }
-  function sinirla(v) { return Math.min(enFazla(), Math.max(0, v)); }
 
-  // Dikis cizgileri = bolumlerin baslangic y konumlari (+ sayfa basi ve sonu).
-  function dikisler() {
-    var d = [0], b = document.querySelectorAll('[data-framer-name^="Section"]');
-    for (var i = 0; i < b.length; i++) d.push(Math.round(b[i].getBoundingClientRect().top + window.scrollY));
-    d.push(enFazla());
-    return d;
-  }
-  function enYakinDikis(y) {
-    var d = dikisler(), en = null, enFark = Infinity;
-    for (var i = 0; i < d.length; i++) {
-      var f = Math.abs(d[i] - y);
-      if (f < enFark) { enFark = f; en = d[i]; }
+  function sahneler() {
+    var vh = window.innerHeight, en = enFazla(), capa = [];
+    var dugum = document.querySelectorAll('p,h1,h2,h3');
+    for (var i = 0; i < dugum.length; i++) {
+      var e = dugum[i], t = (e.innerText || '').trim();
+      if (t.length < 2) continue;
+      var r = e.getBoundingClientRect();
+      if (r.height < 8) continue;
+      if ((parseFloat(getComputedStyle(e).fontSize) || 0) < MIN_FONT) continue;
+      capa.push({ ust: r.top + window.scrollY, alt: r.bottom + window.scrollY });
     }
-    return { konum: en, fark: enFark };
-  }
+    capa.sort(function (a, b) { return a.ust - b.ust; });
 
-  function dongu(benim) {
-    if (benim !== jeton) return;            // donmus/eski dongu: sessizce bitsin
-    sonKare = performance.now();
-    // Gec yuklenen gorseller sayfa boyunu degistirebilir; hedefi her karede
-    // yeniden sinirla ki en dibe kadar gidebilelim.
-    hedef = sinirla(hedef);
-    var fark = hedef - simdi;
-    // 1px altindaki fark gozle gorulmez; kuyrukta suruklenmemek icin oraya oturt.
-    if (Math.abs(fark) < 1) {
-      simdi = hedef; window.scrollTo(0, simdi);
-      calisiyor = false; oturPlanla(); return;
+    var grup = [];
+    for (var j = 0; j < capa.length; j++) {
+      var son = grup[grup.length - 1];
+      if (son && capa[j].ust - son.alt < GRUP) son.alt = Math.max(son.alt, capa[j].alt);
+      else grup.push({ ust: capa[j].ust, alt: capa[j].alt });
     }
-    simdi += fark * EASE;
-    window.scrollTo(0, simdi);
-    requestAnimationFrame(function () { dongu(benim); });
-  }
 
-  function baslat() {
-    if (canli()) return;                    // zaten saglikli donuyor
-    calisiyor = true; sonKare = performance.now();
-    var j = ++jeton;                        // eski donguleri gecersiz kil
-    requestAnimationFrame(function () { dongu(j); });
-  }
-
-  function otur() {
-    if (canli()) return;
-    var y = window.scrollY, e = enYakinDikis(y);
-    if (e.konum === null) return;
-    if (e.fark > 0.5 && e.fark <= window.innerHeight * YAKINLIK) {
-      simdi = y; hedef = sinirla(e.konum); baslat();
+    var nokta = [0];
+    for (var k = 0; k < grup.length; k++) {
+      var orta = (grup[k].ust + grup[k].alt) / 2;
+      nokta.push(Math.max(0, Math.min(en, Math.round(orta - vh / 2))));
     }
-  }
-  function oturPlanla() { clearTimeout(oturZaman); oturZaman = setTimeout(otur, BEKLE); }
+    nokta.push(en);
+    nokta.sort(function (a, b) { return a - b; });
+    nokta = nokta.filter(function (v, i, a) { return i === 0 || v - a[i - 1] > 24; });
 
-  // Kendi icinde kayan bir alanin (ornegin tasan bir kutu) uzerindeysek karisma.
-  function kendiKayanAlan(el) {
-    while (el && el.nodeType === 1 && el !== document.body && el !== document.documentElement) {
-      if (el.hasAttribute('data-lenis-prevent')) return true;
-      var st = getComputedStyle(el);
-      if (/(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 1) return true;
-      el = el.parentElement;
+    // Iki sahne arasi bir ekrandan genisse aralara nokta serpistir. Yoksa
+    // "proximity" snap iki nokta arasindaki bosluktan ileri gitmeye izin
+    // vermez; sayfa basinda asagi kaydirinca en yakin nokta yine sayfa basi
+    // olur ve kullanici geri cekilir.
+    var dolu = [];
+    for (var m = 0; m < nokta.length; m++) {
+      dolu.push(nokta[m]);
+      if (m + 1 < nokta.length) {
+        var bosluk = nokta[m + 1] - nokta[m];
+        if (bosluk > vh * 0.55) {
+          var adet = Math.ceil(bosluk / (vh * 0.55)) - 1;
+          for (var q = 1; q <= adet; q++) dolu.push(Math.round(nokta[m] + bosluk * q / (adet + 1)));
+        }
+      }
     }
-    return false;
+    return dolu.sort(function (a, b) { return a - b; });
   }
 
-  window.addEventListener('wheel', function (e) {
-    if (e.ctrlKey) return;                            // pinch-zoom'a dokunma
-    if (kendiKayanAlan(e.target)) return;
-    e.preventDefault();
-    clearTimeout(oturZaman);
+  function kur() {
+    var eski = document.getElementById(ID);
+    if (eski) eski.remove();
 
-    var dy = e.deltaY;
-    if (e.deltaMode === 1) dy *= 16;                      // satir birimi
-    else if (e.deltaMode === 2) dy *= window.innerHeight; // sayfa birimi
+    var nokta = sahneler();
+    if (nokta.length < 3) return;           // beklenmedik durum: hic dokunma
 
-    if (!canli()) { simdi = window.scrollY; hedef = simdi; }
-    hedef = sinirla(hedef + dy);
-    baslat();
-    oturPlanla();
-  }, { passive: false });
-
-  // Klavye / kaydirma cubugu ile kaydirildiginda da dikise otur.
-  window.addEventListener('scroll', function () { if (!canli()) oturPlanla(); }, { passive: true });
-
-  ['keydown', 'mousedown', 'touchstart'].forEach(function (t) {
-    window.addEventListener(t, function () { if (!canli()) { hedef = simdi = window.scrollY; } }, { passive: true });
-  });
-  window.addEventListener('resize', function () { jeton++; calisiyor = false; hedef = simdi = window.scrollY; });
-
-  // Sekmeye geri donuldugunde yarim kalmis dongulerden temizlen.
-  document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') {
-      jeton++; calisiyor = false; hedef = simdi = window.scrollY;
+    var kat = document.createElement('div');
+    kat.id = ID;
+    kat.setAttribute('aria-hidden', 'true');
+    kat.style.cssText = 'position:absolute;top:0;left:0;width:0;height:0;pointer-events:none;z-index:-1';
+    for (var i = 0; i < nokta.length; i++) {
+      var m = document.createElement('div');
+      m.style.cssText = 'position:absolute;left:0;width:1px;height:1px;pointer-events:none;' +
+                        'scroll-snap-align:start;top:' + nokta[i] + 'px';
+      kat.appendChild(m);
     }
-  });
+    document.body.appendChild(kat);
+    document.documentElement.style.scrollSnapType = 'y proximity';
+    document.documentElement.style.scrollBehavior = 'smooth';
+  }
+
+  var zaman = null;
+  function kurPlanla() { clearTimeout(zaman); zaman = setTimeout(kur, 200); }
+
+  if (document.readyState === 'complete') kurPlanla();
+  else window.addEventListener('load', kurPlanla);
+  window.addEventListener('resize', kurPlanla);
+  // Gec yuklenen gorseller sayfa boyunu degistirebilir; birkac kez tazele.
+  setTimeout(kurPlanla, 2000);
+  setTimeout(kurPlanla, 5000);
 })();
 </script>
 </body></html>
