@@ -814,39 +814,44 @@
 
 
 <iframe id="__framer-editorbar" src="./assets/edit.html" aria-hidden="true" allow="autoplay" tabindex="-1" class="status_hidden"></iframe><script id="tr-smooth-scroll">
-/* Sayfalama (scroll snap) + yumusak kaydirma.
+/* Sayfalama: gercek sayfa gecisleri.
 
-   Tarayicinin KENDI scroll-snap'ini kullaniyoruz. Tekerlek olayini JS ile ele
-   gecirip kendi animasyonumuzu surmek kirilgandi: sekme arka plana alininca
-   requestAnimationFrame duruyor ve kaydirma kilitleniyordu. CSS snap'te bu risk
-   yok; dokunmatikte, klavyede ve kaydirma cubugunda da ayni sekilde calisir.
+   Onceki surum sayfayi normal kaydirip CSS snap ile oturtuyordu. Icerik
+   parmakla birlikte suruklendigi icin hala "tek uzun sayfa" gibi duruyordu.
+   Simdi icerik sabit bir pencereye alindi: kaydirma yalnizca hangi sayfada
+   oldugumuzu belirliyor, sayfa degisince icerik animasyonla geciyor.
 
-   Nasil: asagidaki SAHNE listesi Framer export'undaki katman adlarindan gercek
-   icerik bloklarini bulur (hero, davetiye, her etkinlik karti, yol tarifi,
-   Gelin & Damat, fotograflar, RSVP, bilgi kartlari, Instagram, geri sayim).
-   Her sahne icin sayfaya gorunmez 1px'lik bir isaretci konur; scroll-snap-align
-   sayesinde tarayici kaydirmayi bu noktalara oturtur.
+   Nasil calisiyor:
+   - #main, 100vh yuksekliginde sabit (fixed) bir pencereye donusturulur ve
+     tasan kisim kirpilir.
+   - Govdeye sayfa sayisi kadar 100vh'lik bos bir serit eklenir; kaydirma
+     alanini o yaratir. Boylece dokunmatik, tekerlek, klavye ve kaydirma
+     cubugu tarayicinin kendi kaydirmasiyla calismaya devam eder. (Kendi jest
+     kodumuzu yazsaydik sekme arka plana alininca rAF durur ve kaydirma
+     kilitlenirdi - onceki denemede bu olmustu.)
+   - Seritteki her 100vh'lik parca bir snap noktasi tasir; kaydirma her zaman
+     tam bir sayfaya oturur.
+   - scroll olayinda sayfa indeksi hesaplanir ve pencere kendi icinde o
+     sayfanin konumuna yumusak kaydirilir. Framer'in kok elemanina hic
+     dokunulmuyor: React yeniden render edince inline stiller siliniyordu.
+     Pencerenin kendisini kaydirmak ayrica sticky muzik butonunu ve Framer'in
+     gorunurluk animasyonlarini da dogal olarak calistiriyor.
 
-   Onceki surum snap noktalarini "font-size >= 40px olan basliklar" sezgisiyle
-   buluyordu; kartlarin 17px ustune dusuyor ve karti tepeden kirpiyordu. Artik
-   noktalar bloklarin kendi olculerinden hesaplaniyor: ekrana sigan blok
-   ortalaniyor, sigmayan blok birden fazla noktaya bolunuyor.
+   Sayfa konumlari Framer katman adlarindan bulunan gercek icerik
+   bloklarindan hesaplanir; ekrana sigan blok ortalanir, uzun blok bolunur,
+   ard arda gelen kucuk kartlar tek sayfada paketlenir.
 
    Kapatmak icin bu <script> blogunu silmek yeterli. */
 (function () {
   'use strict';
 
-  var KATILIK = 'mandatory'; // kesin sayfalama. Yumusak istenirse: 'proximity'
-  var ID      = 'tr-snap-katman';
-  var YAKIN   = 60;          // bu kadar yakin iki nokta tek nokta sayilir (px)
+  var ID      = 'tr-sayfa-serit';
+  var YAKIN   = 60;          // bu kadar yakin iki nokta tek sayfa sayilir (px)
   var SIGAR   = 0.95;        // paketlemede bir sayfaya sigan oran
-  var TEKNOK  = 1.20;        // blok ekranin bu katindan kisaysa tek noktaya ortalanir
+  var TEKNOK  = 1.20;        // blok ekranin bu katindan kisaysa tek sayfa
   var ADIM    = 0.90;        // uzun blok bolunurken adim (ekran yuksekligi kati)
-  var DIPYAKIN= 0.30;        // sayfa sonuna bu kadar yakin nokta, dibe birlestirilir
+  var DIPYAKIN= 0.30;        // sayfa sonuna bu kadar yakin nokta dibe katilir
 
-  // [secici, mod] - mod 'tek': blogun kendisi bir sahne,
-  //                 mod 'satir': cocuklari sahne (ayni hizadakiler tek satir).
-  // Bulunamayan secici sessizce atlanir; breakpoint'e gore bazilari yok.
   var SAHNE = [
     ['[data-framer-name="Section 1"]',              'tek'],
     ['[data-framer-name="Invite"]',                 'tek'],
@@ -861,26 +866,49 @@
     ['[data-framer-name="Footer"] .framer-572pmh',  'tek']
   ];
 
+  // Hareket azaltma tercihi varsa sayfaya hic dokunma: normal kaydirma kalsin.
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-  function enFazla() {
-    return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-  }
+  var pencere = document.getElementById('main');
+  if (!pencere) return;
+  // Kok her seferinde yeniden sorgulanir: React hidrasyonda dugumu
+  // degistirebiliyor ve saklanan referans bayatliyor.
+  var kok = null;
+
+  var sayfa = [];      // her sayfanin icerik icindeki konumu (px)
+  var indeks = -1;
+  var serit = null;
+  // Sayfa yuksekligi piksel olarak saklanir. CSS'te 100vh kullansaydik iOS'ta
+  // 100vh adres cubugu acikken bile buyuk viewport'u verdigi icin JS'in
+  // innerHeight'i ile uyusmazdi; indeks matematigi kayardi.
+  var sayfaYuk = 0;
 
   function gorunur(e) {
     var s = getComputedStyle(e);
     return s.display !== 'none' && s.visibility !== 'hidden';
   }
 
+  // Konumlar govdeye gore degil, Framer kokune gore olculur: #main sabitlenince
+  // getBoundingClientRect().top + scrollY artik belge konumunu vermez.
   function olc(e) {
-    var r = e.getBoundingClientRect();
-    return { ust: r.top + window.scrollY, alt: r.bottom + window.scrollY };
+    var r = e.getBoundingClientRect(), k = kok.getBoundingClientRect();
+    return { ust: r.top - k.top, alt: r.bottom - k.top };
   }
 
-  // Ard arda gelen kucuk kartlari ekran dolusu sayfalara paketle. Ornegin
-  // 4 bilgi karti tek tek alinsa 300px'lik minik adimlar cikardi; ikiserli
-  // gruplaninca her sayfa dolu gorunuyor. Etkinlik kartlari (559px) ikiye
-  // sigmadigi icin tek tek kaliyor - istenen de bu.
+  function icerikBoyu() { return pencere.scrollHeight; }
+
+  // Program kartlarini birbirinden ayir: kart + bosluk tam bir ekran olsun ki
+  // bir sayfada yalnizca tek kart kalsin. Varsayilan 40px'lik aralikta ayni
+  // anda uc kart goruluyordu.
+  function kartAraliginiAc() {
+    var e = document.querySelector('[data-framer-name="Event Cards"]');
+    if (!e || !e.children.length) return;
+    var vh = window.innerHeight;
+    var kart = e.children[0].getBoundingClientRect().height;
+    if (!kart || kart >= vh) { e.style.rowGap = ''; return; }
+    e.style.rowGap = Math.round(vh - kart) + 'px';
+  }
+
   function esitBol(a, k) {
     var out = [], n = a.length;
     for (var i = 0; i < k; i++) {
@@ -894,34 +922,19 @@
   function paketle(satir, vh) {
     if (satir.length < 2) return satir;
     var span = satir[satir.length - 1].alt - satir[0].ust;
-    var sayfa = Math.max(1, Math.ceil(span / (vh * SIGAR)));
-    for (; sayfa < satir.length; sayfa++) {
-      var g = esitBol(satir, sayfa), tamam = true;
+    var adet = Math.max(1, Math.ceil(span / (vh * SIGAR)));
+    for (; adet < satir.length; adet++) {
+      var g = esitBol(satir, adet), tamam = true;
       for (var i = 0; i < g.length; i++) {
         if (g[i].alt - g[i].ust > vh * SIGAR) { tamam = false; break; }
       }
       if (tamam) return g;
     }
-    return satir;   // hicbiri sigmadi: her kart kendi sayfasi
+    return satir;
   }
 
-  // Program kartlarini birbirinden ayir: kart + bosluk tam bir ekran olsun ki
-  // her snap sayfasinda yalnizca tek kart kalsin. Onceden aralik 40px'ti ve
-  // ayni anda uc kart goruluyordu (ustteki kartin alti 457px, alttakinin
-  // tepesi 456px ekranda kaliyordu). Mobilde konteyner "column wrap",
-  // masaustunde "row wrap"; ikisinde de satir araligi row-gap ile ayarlanir.
-  function kartAraliginiAc() {
-    var e = document.querySelector('[data-framer-name="Event Cards"]');
-    if (!e || !e.children.length) return;
-    var vh = window.innerHeight;
-    var kart = e.children[0].getBoundingClientRect().height;
-    if (!kart || kart >= vh) { e.style.rowGap = ''; return; }   // sigmiyorsa dokunma
-    e.style.rowGap = Math.round(vh - kart) + 'px';
-  }
-
-  // Sahne bloklarini topla.
   function bloklar() {
-    var out = [];
+    var out = [], vh = window.innerHeight;
     for (var i = 0; i < SAHNE.length; i++) {
       var el = document.querySelector(SAHNE[i][0]);
       if (!el || !gorunur(el)) continue;
@@ -932,7 +945,6 @@
         continue;
       }
 
-      // 'satir': cocuklari al, ayni hizada olanlari (desktop grid) birlestir.
       var satir = [];
       for (var j = 0; j < el.children.length; j++) {
         var c = el.children[j];
@@ -940,7 +952,6 @@
         var k = olc(c);
         if (k.alt - k.ust < 60) continue;
         var s = satir[satir.length - 1];
-        // Dikey olarak yariya yakin ortusuyorsa ayni satir say.
         if (s && k.ust < s.alt - (Math.min(s.alt - s.ust, k.alt - k.ust) * 0.5)) {
           s.ust = Math.min(s.ust, k.ust);
           s.alt = Math.max(s.alt, k.alt);
@@ -948,14 +959,12 @@
           satir.push(k);
         }
       }
-      out = out.concat(paketle(satir, window.innerHeight));
+      out = out.concat(paketle(satir, vh));
     }
 
     out.sort(function (a, b) { return a.ust - b.ust || a.alt - b.alt; });
 
-    // Ic ice gecmis bloklari ele: breakpoint'e gore bazi bloklar birbirinin
-    // icinde kaliyor (ornegin desktop'ta "CTA - Location", "Meet the..."
-    // icinde). Disttakini tutuyoruz; uzunsa zaten alt noktalara bolunecek.
+    // Ic ice gecmis bloklari ele (breakpoint'e gore bazilari birbirinin icinde).
     var temiz = [];
     for (var m = 0; m < out.length; m++) {
       var ic = false;
@@ -967,10 +976,8 @@
       if (!ic) temiz.push(out[m]);
     }
 
-    // Yan yana duran kucuk bloklari ayni sayfada topla. Desktop'ta
-    // "Bilmeniz Gerekenler" basligi ile bilgi kartlari 296px arayla iki ayri
-    // sayfaya dusuyordu; tek ekrana sigiyorlarsa tek sahne olmalilar.
-    var vh = window.innerHeight, birlesik = [];
+    // Yan yana duran kucuk bloklari ayni sayfada topla.
+    var birlesik = [];
     for (var t = 0; t < temiz.length; t++) {
       var son = birlesik[birlesik.length - 1];
       if (son && temiz[t].alt - son.ust <= vh * SIGAR) {
@@ -982,11 +989,10 @@
     return birlesik;
   }
 
-  // Bir blogu snap noktalarina cevir.
   function noktala(b, vh) {
     var h = b.alt - b.ust;
-    if (h <= vh * TEKNOK) return [b.ust - (vh - h) / 2];  // ekrana ortala
-    var son = b.alt - vh;                                  // alt kenar hizasi
+    if (h <= vh * TEKNOK) return [b.ust - (vh - h) / 2];
+    var son = b.alt - vh;
     var adet = Math.max(2, Math.ceil((son - b.ust) / (vh * ADIM)) + 1);
     var p = [];
     for (var i = 0; i < adet; i++) p.push(b.ust + (son - b.ust) * i / (adet - 1));
@@ -994,7 +1000,8 @@
   }
 
   function noktalar() {
-    var vh = window.innerHeight, en = enFazla();
+    var vh = window.innerHeight;
+    var en = Math.max(0, icerikBoyu() - vh);
     var b = bloklar(), ham = [0];
 
     for (var i = 0; i < b.length; i++) {
@@ -1006,17 +1013,15 @@
     ham.push(en);
     ham.sort(function (x, y) { return x - y; });
 
-    // Cok yakin noktalari tekille.
     var tek = [];
     for (var k = 0; k < ham.length; k++) {
       if (!tek.length || ham[k] - tek[tek.length - 1] > YAKIN) tek.push(ham[k]);
     }
-    // Sayfa dibine cok yakin araya sikismis noktalari at; dip noktasi kalsin.
     while (tek.length > 1 && en - tek[tek.length - 1] < vh * DIPYAKIN) tek.pop();
     tek.push(en);
 
-    // Iki nokta arasi bir ekrandan genisse aralara nokta serpistir; yoksa
-    // aradaki icerige hic durmadan gecilir.
+    // Iki sayfa arasi bir ekrandan genisse aralara sayfa serpistir; yoksa
+    // aradaki icerik hic gorunmeden atlanir.
     var dolu = [];
     for (var m = 0; m < tek.length; m++) {
       dolu.push(tek[m]);
@@ -1033,40 +1038,100 @@
     return dolu.sort(function (x, y) { return x - y; });
   }
 
-  function kur() {
-    kartAraliginiAc();
-    var nokta = noktalar();
-    if (nokta.length < 3) return;   // beklenmedik durum: hic dokunma
+  // Icerigi sabit pencereye al ve kaydirma seridini kur.
+  function pencereyiKur() {
+    pencere.style.position = 'fixed';
+    pencere.style.top = '0';
+    pencere.style.left = '0';
+    pencere.style.right = '0';
+    pencere.style.width = '100%';
+    pencere.style.height = sayfaYuk + 'px';
+    pencere.style.overflow = 'hidden';
+    pencere.style.zIndex = '1';
 
-    var eski = document.getElementById(ID);
-    if (eski) eski.remove();
-
-    var kat = document.createElement('div');
-    kat.id = ID;
-    kat.setAttribute('aria-hidden', 'true');
-    kat.style.cssText = 'position:absolute;top:0;left:0;width:0;height:0;' +
-                        'pointer-events:none;z-index:-1';
-    for (var i = 0; i < nokta.length; i++) {
-      var m = document.createElement('div');
-      m.style.cssText = 'position:absolute;left:0;width:1px;height:1px;' +
-                        'pointer-events:none;scroll-snap-align:start;top:' +
-                        nokta[i] + 'px';
-      kat.appendChild(m);
+    serit = document.getElementById(ID);
+    if (!serit) {
+      serit = document.createElement('div');
+      serit.id = ID;
+      serit.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(serit);
     }
-    document.body.appendChild(kat);
-    document.documentElement.style.scrollSnapType = 'y ' + KATILIK;
-    document.documentElement.style.scrollBehavior = 'smooth';
+    serit.style.cssText = 'position:relative;width:1px;pointer-events:none;' +
+                          'opacity:0;z-index:0';
+    serit.innerHTML = '';
+    for (var i = 0; i < sayfa.length; i++) {
+      var d = document.createElement('div');
+      d.style.cssText = 'height:' + sayfaYuk + 'px;scroll-snap-align:start';
+      serit.appendChild(d);
+    }
+    document.documentElement.style.scrollSnapType = 'y mandatory';
+    // Dis serit gorunmez; onu yumusak kaydirmanin anlami yok. Animasyonu
+    // yalnizca icerideki pencere yapiyor, boylece gecis gecikmeden basliyor.
+    document.documentElement.style.scrollBehavior = 'auto';
+  }
+
+  function sinirla(i) {
+    return i < 0 ? 0 : (i > sayfa.length - 1 ? sayfa.length - 1 : i);
+  }
+
+  function gecis(i, ani) {
+    i = sinirla(i);
+    if (i === indeks && !ani) return;
+    indeks = i;
+    pencere.scrollTo({ top: sayfa[i], behavior: ani ? 'auto' : 'smooth' });
+  }
+
+  function goster(zorla) {
+    gecis(Math.round(window.scrollY / sayfaYuk), zorla);
+  }
+
+  // Dokunma yardimcisi.
+  // Sayfalar tam bir ekran araliginda oldugu icin tarayicinin "mandatory"
+  // snap'i yarim ekrandan (422px) kisa surüklemeleri geri cekiyordu; telefonda
+  // yavas surukleyen biri sayfayi hic cevirememis oluyordu. Burada 40px'i gecen
+  // her kaydirma tam bir sayfa ilerletiyor - kaydirmayi devralmiyoruz, sadece
+  // hedef sayfaya yonlendiriyoruz.
+  var dokBas = null, dokSayfa = 0;
+  window.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1) { dokBas = null; return; }
+    dokBas = e.touches[0].clientY;
+    dokSayfa = Math.round(window.scrollY / sayfaYuk);
+  }, { passive: true });
+
+  window.addEventListener('touchend', function (e) {
+    if (dokBas === null) return;
+    var son = e.changedTouches && e.changedTouches[0];
+    var fark = son ? (dokBas - son.clientY) : 0;
+    dokBas = null;
+    if (Math.abs(fark) < 40) return;          // dokunus/tiklama, kaydirma degil
+    var hedef = sinirla(dokSayfa + (fark > 0 ? 1 : -1));
+    gecis(hedef, false);                       // gorsel gecisi hemen baslat
+    window.scrollTo({ top: hedef * sayfaYuk, behavior: 'auto' });
+  }, { passive: true });
+
+  function kur() {
+    kok = document.querySelector('[data-framer-root]');
+    if (!kok) return;
+    sayfaYuk = window.innerHeight;
+    if (!sayfaYuk) return;
+    kartAraliginiAc();
+    sayfa = noktalar();
+    if (sayfa.length < 2) return;
+    pencereyiKur();
+    indeks = -1;
+    goster(true);   // ilk yerlesimde animasyon olmasin
   }
 
   var zaman = null;
   function kurPlanla() { clearTimeout(zaman); zaman = setTimeout(kur, 200); }
 
+  window.addEventListener('scroll', function () { goster(false); }, { passive: true });
+
   if (document.readyState === 'complete') kurPlanla();
   else window.addEventListener('load', kurPlanla);
 
-  // Mobilde adres cubugu acilip kapaninca resize tetiklenir; o sirada yeniden
-  // hesaplayip snap'i degistirirsek sayfa kaydirma ortasinda ziplar. Sadece
-  // gercek boyut degisiminde yeniden kur.
+  // Mobilde adres cubugu acilip kapaninca resize tetiklenir; kucuk yukseklik
+  // degisimlerinde yeniden kurmuyoruz ki sayfa ortasinda ziplamasin.
   var sonG = window.innerWidth, sonY = window.innerHeight;
   window.addEventListener('resize', function () {
     if (window.innerWidth === sonG && Math.abs(window.innerHeight - sonY) < 200) return;
@@ -1074,7 +1139,6 @@
     kurPlanla();
   });
 
-  // Gec yuklenen gorseller sayfa boyunu degistirebilir; birkac kez tazele.
   setTimeout(kurPlanla, 2000);
   setTimeout(kurPlanla, 5000);
 })();
