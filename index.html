@@ -816,25 +816,50 @@
 <iframe id="__framer-editorbar" src="./assets/edit.html" aria-hidden="true" allow="autoplay" tabindex="-1" class="status_hidden"></iframe><script id="tr-smooth-scroll">
 /* Sayfalama (scroll snap) + yumusak kaydirma.
 
-   Tarayicinin KENDI scroll-snap'ini kullaniyoruz. Onceki denemede tekerlek
-   olayini JS ile ele gecirip kendi animasyonumuzu surmustuk; calisiyordu ama
-   kirilgandi: sekme arka plana alininca requestAnimationFrame duruyor, dongu
-   yarida kaliyor ve kaydirma tamamen kilitleniyordu. CSS snap'te bu risk yok,
-   ayrica dokunmatikte / klavyede / kaydirma cubugunda da ayni sekilde calisir.
+   Tarayicinin KENDI scroll-snap'ini kullaniyoruz. Tekerlek olayini JS ile ele
+   gecirip kendi animasyonumuzu surmek kirilgandi: sekme arka plana alininca
+   requestAnimationFrame duruyor ve kaydirma kilitleniyordu. CSS snap'te bu risk
+   yok; dokunmatikte, klavyede ve kaydirma cubugunda da ayni sekilde calisir.
 
-   Nasil: sayfadaki iri basliklardan "sahne" konumlari hesaplanir (hero,
-   davetiye, her etkinlik karti, Yol tarifi, Gelin & Damat, RSVP, Bilmeniz
-   Gerekenler kartlari, Anlari Takip Edin, Geri Sayim). Her sahne icin sayfaya
-   gorunmez 1px'lik bir isaretci konur; scroll-snap-align sayesinde tarayici
-   kaydirmayi bu noktalara oturtur.
+   Nasil: asagidaki SAHNE listesi Framer export'undaki katman adlarindan gercek
+   icerik bloklarini bulur (hero, davetiye, her etkinlik karti, yol tarifi,
+   Gelin & Damat, fotograflar, RSVP, bilgi kartlari, Instagram, geri sayim).
+   Her sahne icin sayfaya gorunmez 1px'lik bir isaretci konur; scroll-snap-align
+   sayesinde tarayici kaydirmayi bu noktalara oturtur.
 
-   "proximity" bilerek secildi: "mandatory" olsaydi iki sahne arasindaki uzun
-   metinlerde okurken surekli geri cekilirdi.
+   Onceki surum snap noktalarini "font-size >= 40px olan basliklar" sezgisiyle
+   buluyordu; kartlarin 17px ustune dusuyor ve karti tepeden kirpiyordu. Artik
+   noktalar bloklarin kendi olculerinden hesaplaniyor: ekrana sigan blok
+   ortalaniyor, sigmayan blok birden fazla noktaya bolunuyor.
+
    Kapatmak icin bu <script> blogunu silmek yeterli. */
 (function () {
-  var MIN_FONT = 40;     // "iri baslik" esigi
-  var GRUP = 220;        // bu kadar yakin basliklar tek sahne sayilir
-  var ID = 'tr-snap-katman';
+  'use strict';
+
+  var KATILIK = 'mandatory'; // kesin sayfalama. Yumusak istenirse: 'proximity'
+  var ID      = 'tr-snap-katman';
+  var YAKIN   = 60;          // bu kadar yakin iki nokta tek nokta sayilir (px)
+  var SIGAR   = 0.95;        // paketlemede bir sayfaya sigan oran
+  var TEKNOK  = 1.20;        // blok ekranin bu katindan kisaysa tek noktaya ortalanir
+  var ADIM    = 0.90;        // uzun blok bolunurken adim (ekran yuksekligi kati)
+  var DIPYAKIN= 0.30;        // sayfa sonuna bu kadar yakin nokta, dibe birlestirilir
+
+  // [secici, mod] - mod 'tek': blogun kendisi bir sahne,
+  //                 mod 'satir': cocuklari sahne (ayni hizadakiler tek satir).
+  // Bulunamayan secici sessizce atlanir; breakpoint'e gore bazilari yok.
+  var SAHNE = [
+    ['[data-framer-name="Section 1"]',              'tek'],
+    ['[data-framer-name="Invite"]',                 'tek'],
+    ['[data-framer-name="Event Cards"]',            'satir'],
+    ['[data-framer-name="CTA - Location"]',         'tek'],
+    ['[data-framer-name="Meet the..."]',            'tek'],
+    ['[data-framer-name="Wedding shoot"]',          'tek'],
+    ['[data-framer-name="CTA 2 - WhatsApp link"]',  'tek'],
+    ['[data-framer-name="Things to know - Title"]', 'tek'],
+    ['[data-framer-name="Information"]',            'satir'],
+    ['[data-framer-name="CTA 3 - Instagram"]',      'tek'],
+    ['[data-framer-name="Footer"] .framer-572pmh',  'tek']
+  ];
 
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
@@ -842,72 +867,179 @@
     return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
   }
 
-  function sahneler() {
-    var vh = window.innerHeight, en = enFazla(), capa = [];
-    var dugum = document.querySelectorAll('p,h1,h2,h3');
-    for (var i = 0; i < dugum.length; i++) {
-      var e = dugum[i], t = (e.innerText || '').trim();
-      if (t.length < 2) continue;
-      var r = e.getBoundingClientRect();
-      if (r.height < 8) continue;
-      if ((parseFloat(getComputedStyle(e).fontSize) || 0) < MIN_FONT) continue;
-      capa.push({ ust: r.top + window.scrollY, alt: r.bottom + window.scrollY });
-    }
-    capa.sort(function (a, b) { return a.ust - b.ust; });
+  function gorunur(e) {
+    var s = getComputedStyle(e);
+    return s.display !== 'none' && s.visibility !== 'hidden';
+  }
 
-    var grup = [];
-    for (var j = 0; j < capa.length; j++) {
-      var son = grup[grup.length - 1];
-      if (son && capa[j].ust - son.alt < GRUP) son.alt = Math.max(son.alt, capa[j].alt);
-      else grup.push({ ust: capa[j].ust, alt: capa[j].alt });
+  function olc(e) {
+    var r = e.getBoundingClientRect();
+    return { ust: r.top + window.scrollY, alt: r.bottom + window.scrollY };
+  }
+
+  // Ard arda gelen kucuk kartlari ekran dolusu sayfalara paketle. Ornegin
+  // 4 bilgi karti tek tek alinsa 300px'lik minik adimlar cikardi; ikiserli
+  // gruplaninca her sayfa dolu gorunuyor. Etkinlik kartlari (559px) ikiye
+  // sigmadigi icin tek tek kaliyor - istenen de bu.
+  function esitBol(a, k) {
+    var out = [], n = a.length;
+    for (var i = 0; i < k; i++) {
+      var s = Math.floor(i * n / k), e = Math.floor((i + 1) * n / k);
+      if (e <= s) e = s + 1;
+      out.push({ ust: a[s].ust, alt: a[Math.min(n - 1, e - 1)].alt });
+    }
+    return out;
+  }
+
+  function paketle(satir, vh) {
+    if (satir.length < 2) return satir;
+    var span = satir[satir.length - 1].alt - satir[0].ust;
+    var sayfa = Math.max(1, Math.ceil(span / (vh * SIGAR)));
+    for (; sayfa < satir.length; sayfa++) {
+      var g = esitBol(satir, sayfa), tamam = true;
+      for (var i = 0; i < g.length; i++) {
+        if (g[i].alt - g[i].ust > vh * SIGAR) { tamam = false; break; }
+      }
+      if (tamam) return g;
+    }
+    return satir;   // hicbiri sigmadi: her kart kendi sayfasi
+  }
+
+  // Sahne bloklarini topla.
+  function bloklar() {
+    var out = [];
+    for (var i = 0; i < SAHNE.length; i++) {
+      var el = document.querySelector(SAHNE[i][0]);
+      if (!el || !gorunur(el)) continue;
+
+      if (SAHNE[i][1] === 'tek') {
+        var b = olc(el);
+        if (b.alt - b.ust >= 60) out.push(b);
+        continue;
+      }
+
+      // 'satir': cocuklari al, ayni hizada olanlari (desktop grid) birlestir.
+      var satir = [];
+      for (var j = 0; j < el.children.length; j++) {
+        var c = el.children[j];
+        if (!gorunur(c)) continue;
+        var k = olc(c);
+        if (k.alt - k.ust < 60) continue;
+        var s = satir[satir.length - 1];
+        // Dikey olarak yariya yakin ortusuyorsa ayni satir say.
+        if (s && k.ust < s.alt - (Math.min(s.alt - s.ust, k.alt - k.ust) * 0.5)) {
+          s.ust = Math.min(s.ust, k.ust);
+          s.alt = Math.max(s.alt, k.alt);
+        } else {
+          satir.push(k);
+        }
+      }
+      out = out.concat(paketle(satir, window.innerHeight));
     }
 
-    var nokta = [0];
-    for (var k = 0; k < grup.length; k++) {
-      var orta = (grup[k].ust + grup[k].alt) / 2;
-      nokta.push(Math.max(0, Math.min(en, Math.round(orta - vh / 2))));
-    }
-    nokta.push(en);
-    nokta.sort(function (a, b) { return a - b; });
-    nokta = nokta.filter(function (v, i, a) { return i === 0 || v - a[i - 1] > 24; });
+    out.sort(function (a, b) { return a.ust - b.ust || a.alt - b.alt; });
 
-    // Iki sahne arasi bir ekrandan genisse aralara nokta serpistir. Yoksa
-    // "proximity" snap iki nokta arasindaki bosluktan ileri gitmeye izin
-    // vermez; sayfa basinda asagi kaydirinca en yakin nokta yine sayfa basi
-    // olur ve kullanici geri cekilir.
+    // Ic ice gecmis bloklari ele: breakpoint'e gore bazi bloklar birbirinin
+    // icinde kaliyor (ornegin desktop'ta "CTA - Location", "Meet the..."
+    // icinde). Disttakini tutuyoruz; uzunsa zaten alt noktalara bolunecek.
+    var temiz = [];
+    for (var m = 0; m < out.length; m++) {
+      var ic = false;
+      for (var n = 0; n < out.length; n++) {
+        if (n === m) continue;
+        if (out[n].ust <= out[m].ust && out[n].alt >= out[m].alt &&
+            (out[n].alt - out[n].ust) > (out[m].alt - out[m].ust)) { ic = true; break; }
+      }
+      if (!ic) temiz.push(out[m]);
+    }
+
+    // Yan yana duran kucuk bloklari ayni sayfada topla. Desktop'ta
+    // "Bilmeniz Gerekenler" basligi ile bilgi kartlari 296px arayla iki ayri
+    // sayfaya dusuyordu; tek ekrana sigiyorlarsa tek sahne olmalilar.
+    var vh = window.innerHeight, birlesik = [];
+    for (var t = 0; t < temiz.length; t++) {
+      var son = birlesik[birlesik.length - 1];
+      if (son && temiz[t].alt - son.ust <= vh * SIGAR) {
+        son.alt = Math.max(son.alt, temiz[t].alt);
+      } else {
+        birlesik.push({ ust: temiz[t].ust, alt: temiz[t].alt });
+      }
+    }
+    return birlesik;
+  }
+
+  // Bir blogu snap noktalarina cevir.
+  function noktala(b, vh) {
+    var h = b.alt - b.ust;
+    if (h <= vh * TEKNOK) return [b.ust - (vh - h) / 2];  // ekrana ortala
+    var son = b.alt - vh;                                  // alt kenar hizasi
+    var adet = Math.max(2, Math.ceil((son - b.ust) / (vh * ADIM)) + 1);
+    var p = [];
+    for (var i = 0; i < adet; i++) p.push(b.ust + (son - b.ust) * i / (adet - 1));
+    return p;
+  }
+
+  function noktalar() {
+    var vh = window.innerHeight, en = enFazla();
+    var b = bloklar(), ham = [0];
+
+    for (var i = 0; i < b.length; i++) {
+      var p = noktala(b[i], vh);
+      for (var j = 0; j < p.length; j++) {
+        ham.push(Math.max(0, Math.min(en, Math.round(p[j]))));
+      }
+    }
+    ham.push(en);
+    ham.sort(function (x, y) { return x - y; });
+
+    // Cok yakin noktalari tekille.
+    var tek = [];
+    for (var k = 0; k < ham.length; k++) {
+      if (!tek.length || ham[k] - tek[tek.length - 1] > YAKIN) tek.push(ham[k]);
+    }
+    // Sayfa dibine cok yakin araya sikismis noktalari at; dip noktasi kalsin.
+    while (tek.length > 1 && en - tek[tek.length - 1] < vh * DIPYAKIN) tek.pop();
+    tek.push(en);
+
+    // Iki nokta arasi bir ekrandan genisse aralara nokta serpistir; yoksa
+    // aradaki icerige hic durmadan gecilir.
     var dolu = [];
-    for (var m = 0; m < nokta.length; m++) {
-      dolu.push(nokta[m]);
-      if (m + 1 < nokta.length) {
-        var bosluk = nokta[m + 1] - nokta[m];
-        if (bosluk > vh * 1.6) {
-          var adet = Math.ceil(bosluk / (vh * 1.1)) - 1;
-          for (var q = 1; q <= adet; q++) dolu.push(Math.round(nokta[m] + bosluk * q / (adet + 1)));
+    for (var m = 0; m < tek.length; m++) {
+      dolu.push(tek[m]);
+      if (m + 1 < tek.length) {
+        var bosluk = tek[m + 1] - tek[m];
+        if (bosluk > vh * 1.05) {
+          var ek = Math.ceil(bosluk / (vh * 0.95)) - 1;
+          for (var q = 1; q <= ek; q++) {
+            dolu.push(Math.round(tek[m] + bosluk * q / (ek + 1)));
+          }
         }
       }
     }
-    return dolu.sort(function (a, b) { return a - b; });
+    return dolu.sort(function (x, y) { return x - y; });
   }
 
   function kur() {
+    var nokta = noktalar();
+    if (nokta.length < 3) return;   // beklenmedik durum: hic dokunma
+
     var eski = document.getElementById(ID);
     if (eski) eski.remove();
-
-    var nokta = sahneler();
-    if (nokta.length < 3) return;           // beklenmedik durum: hic dokunma
 
     var kat = document.createElement('div');
     kat.id = ID;
     kat.setAttribute('aria-hidden', 'true');
-    kat.style.cssText = 'position:absolute;top:0;left:0;width:0;height:0;pointer-events:none;z-index:-1';
+    kat.style.cssText = 'position:absolute;top:0;left:0;width:0;height:0;' +
+                        'pointer-events:none;z-index:-1';
     for (var i = 0; i < nokta.length; i++) {
       var m = document.createElement('div');
-      m.style.cssText = 'position:absolute;left:0;width:1px;height:1px;pointer-events:none;' +
-                        'scroll-snap-align:start;top:' + nokta[i] + 'px';
+      m.style.cssText = 'position:absolute;left:0;width:1px;height:1px;' +
+                        'pointer-events:none;scroll-snap-align:start;top:' +
+                        nokta[i] + 'px';
       kat.appendChild(m);
     }
     document.body.appendChild(kat);
-    document.documentElement.style.scrollSnapType = 'y proximity';
+    document.documentElement.style.scrollSnapType = 'y ' + KATILIK;
     document.documentElement.style.scrollBehavior = 'smooth';
   }
 
@@ -916,7 +1048,17 @@
 
   if (document.readyState === 'complete') kurPlanla();
   else window.addEventListener('load', kurPlanla);
-  window.addEventListener('resize', kurPlanla);
+
+  // Mobilde adres cubugu acilip kapaninca resize tetiklenir; o sirada yeniden
+  // hesaplayip snap'i degistirirsek sayfa kaydirma ortasinda ziplar. Sadece
+  // gercek boyut degisiminde yeniden kur.
+  var sonG = window.innerWidth, sonY = window.innerHeight;
+  window.addEventListener('resize', function () {
+    if (window.innerWidth === sonG && Math.abs(window.innerHeight - sonY) < 200) return;
+    sonG = window.innerWidth; sonY = window.innerHeight;
+    kurPlanla();
+  });
+
   // Gec yuklenen gorseller sayfa boyunu degistirebilir; birkac kez tazele.
   setTimeout(kurPlanla, 2000);
   setTimeout(kurPlanla, 5000);
