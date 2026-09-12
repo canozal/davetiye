@@ -847,7 +847,13 @@
 
   var ID      = 'tr-sayfa-serit';
   var TELEFON = 430;         // masaustu cercevesinin genisligi (px)
-  var HERO_KES= 0.575;       // hero kompozisyonunun dogal kesim yeri (oran)
+  /* Hero kompozisyonunun dogal kesim yerleri (hero yuksekliginin orani).
+     Sanat eserinin satir enerjisi olculerek bulundu: dikey + yatay gradyan,
+     kenar suslemeleri dislanarak, en sakin satirlar. Hero sabit yukseklikte
+     (1408px) oldugu icin bu oranlar her ekran genisliginde ayni yere denk
+     geliyor (390px ve 430px'te dogrulandi). Kac parcaya bolunecegi ekran
+     yuksekligine gore secilir. */
+  var HERO_KES= [0.126, 0.349, 0.472, 0.575, 0.713, 0.891];
   var ESIK    = 810;         // Framer'in mobil breakpoint siniri
   var YAKIN   = 60;          // bu kadar yakin iki nokta tek sayfa sayilir (px)
   var SIGAR   = 0.95;        // paketlemede bir sayfaya sigan oran
@@ -1027,6 +1033,38 @@
     e.style.marginBottom = pay + 'px';
   }
 
+  /* Hero'yu ekrana sigacak sayida parcaya bol.
+
+     Onceki surum tek bir sabit kesim kullaniyordu (0.575). O, 844px'lik test
+     ekraninda calisiyordu ama gercek telefonda tarayici cubuklariyla ekran
+     664-780px'e dusuyor; ust yarim (810px) sigmiyor, sayfa ortadan
+     kesiliyordu. Artik parca sayisi ekran yuksekligine gore seciliyor ve
+     kesimler dogal (sakin) noktalara oturtuluyor. */
+  function heroKesimleri(boy, vh) {
+    for (var n = Math.max(2, Math.ceil(boy / vh)); n <= 5; n++) {
+      var sec = [], kullanilan = {}, tamam = true;
+      for (var i = 1; i < n; i++) {
+        var ideal = i / n, eniyi = ideal, fark = 1;
+        for (var j = 0; j < HERO_KES.length; j++) {
+          var d = Math.abs(HERO_KES[j] - ideal);
+          if (d < fark && d < 0.13 && !kullanilan[j]) { fark = d; eniyi = HERO_KES[j]; var se = j; }
+        }
+        if (fark < 1) kullanilan[se] = true;
+        sec.push(eniyi);
+      }
+      sec.sort(function (a, b) { return a - b; });
+      // her parca ekrana sigmali
+      var onceki = 0;
+      for (var q = 0; q < sec.length; q++) {
+        if ((sec[q] - onceki) * boy > vh) { tamam = false; break; }
+        onceki = sec[q];
+      }
+      if (tamam && (1 - onceki) * boy > vh) tamam = false;
+      if (tamam) return sec;
+    }
+    return [0.5];
+  }
+
   function esitBol(a, k) {
     var out = [], n = a.length;
     for (var i = 0; i < k; i++) {
@@ -1075,9 +1113,14 @@
       if (SAHNE[i][1] === 'bol') {
         var hb = olc(el), boy = hb.alt - hb.ust;
         if (boy < 60) continue;
-        var orta = hb.ust + boy * HERO_KES;
-        out.push({ ust: hb.ust, alt: orta, doldur: true });
-        out.push({ ust: orta, alt: hb.alt, doldur: true });
+        var oran = heroKesimleri(boy, vh);
+        var onceki = hb.ust;
+        for (var z = 0; z < oran.length; z++) {
+          var nokta = hb.ust + boy * oran[z];
+          out.push({ ust: onceki, alt: nokta, doldur: true });
+          onceki = nokta;
+        }
+        out.push({ ust: onceki, alt: hb.alt, doldur: true });
         continue;
       }
 
@@ -1147,6 +1190,17 @@
        Bu yalnizca hero icin: etkinlik kartlari kendi zemini uzerinde duran
        ayri kartlar, onlari buyutmek karti yanlardan kirpardi. */
     if (b.doldur && h > 0 && vh / h > 1.05) {
+      return [{ k: b.ust, o: vh / h }];
+    }
+
+    /* Ekrandan uzun sahneyi ikiye bolmek yerine kucultup sigdir.
+
+       Gercek telefon yuksekliklerinde (664-780px) "Yol tarifi", RSVP,
+       Instagram ve bilgi kartlari bloklari ekrandan uzun kaliyor ve birbirine
+       cok yakin iki sayfaya bolunuyordu; hem tokezliyor hem icerigi kesiyordu.
+       Kucultunce sahne tek sayfada butun halde goruluyor, yanlarda zemin
+       kaliyor - etkinlik kartlarindaki gorunumun aynisi. */
+    if (h > vh) {
       return [{ k: b.ust, o: vh / h }];
     }
 
