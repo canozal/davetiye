@@ -905,6 +905,20 @@
     return satir;   // hicbiri sigmadi: her kart kendi sayfasi
   }
 
+  // Program kartlarini birbirinden ayir: kart + bosluk tam bir ekran olsun ki
+  // her snap sayfasinda yalnizca tek kart kalsin. Onceden aralik 40px'ti ve
+  // ayni anda uc kart goruluyordu (ustteki kartin alti 457px, alttakinin
+  // tepesi 456px ekranda kaliyordu). Mobilde konteyner "column wrap",
+  // masaustunde "row wrap"; ikisinde de satir araligi row-gap ile ayarlanir.
+  function kartAraliginiAc() {
+    var e = document.querySelector('[data-framer-name="Event Cards"]');
+    if (!e || !e.children.length) return;
+    var vh = window.innerHeight;
+    var kart = e.children[0].getBoundingClientRect().height;
+    if (!kart || kart >= vh) { e.style.rowGap = ''; return; }   // sigmiyorsa dokunma
+    e.style.rowGap = Math.round(vh - kart) + 'px';
+  }
+
   // Sahne bloklarini topla.
   function bloklar() {
     var out = [];
@@ -1020,6 +1034,7 @@
   }
 
   function kur() {
+    kartAraliginiAc();
     var nokta = noktalar();
     if (nokta.length < 3) return;   // beklenmedik durum: hic dokunma
 
