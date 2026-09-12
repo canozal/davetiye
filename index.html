@@ -863,7 +863,7 @@
     ['[data-framer-name="Wedding shoot"]',          'tek'],
     ['[data-framer-name="CTA 2 - WhatsApp link"]',  'tek'],
     ['[data-framer-name="Things to know - Title"]', 'tek'],
-    ['[data-framer-name="Information"]',            'satir'],
+    ['[data-framer-name="Information"]',            'tek'],
     ['[data-framer-name="CTA 3 - Instagram"]',      'tek'],
     ['[data-framer-name="Footer"] .framer-572pmh',  'tek']
   ];
@@ -946,16 +946,65 @@
 
   function icerikBoyu() { return pencere.scrollHeight; }
 
-  // Program kartlarini birbirinden ayir: kart + bosluk tam bir ekran olsun ki
-  // bir sayfada yalnizca tek kart kalsin. Varsayilan 40px'lik aralikta ayni
-  // anda uc kart goruluyordu.
+  /* Kart kapsayicilarini sayfa yuvalarina yay.
+
+     Kartlar birbirine bitisik dizildigi icin bir sayfada ayni anda birden
+     fazlasinin parcasi goruluyordu (program kartlarinda ust karttan 457px,
+     alt karttan 456px). Kapsayicinin satir araligini, kart + bosluk tam bir
+     yuva olacak sekilde ayarliyoruz; boylece her sayfada yalnizca o sayfaya
+     ait kart(lar) kaliyor.
+
+     adet = bir sayfaya kac kart girecegi. Program kartlari buyuk oldugu icin
+     1, bilgi kartlari kucuk oldugu icin 2 (tek tek alinsalardi bos sayfalar
+     olurdu). */
+  function araligiAyarla(sec, adet) {
+    var e = document.querySelector(sec);
+    if (!e || !e.children.length) return;
+    var kart = e.children[0].getBoundingClientRect().height;
+    var yuva = window.innerHeight / adet;
+    if (!kart || kart >= yuva) { e.style.rowGap = ''; return; }  // sigmiyorsa dokunma
+    e.style.rowGap = Math.round(yuva - kart) + 'px';
+  }
+
+  /* Yalnizca program kartlarina dokunuyoruz.
+
+     Bilgi kartlarini da ayirmayi ve sahnelere kenar boslugu vermeyi denedim;
+     duzeni bozdu. Framer'in bazi bolumleri sabit yukseklikte (Section 3 =
+     2542px) ve icerideki mutlak konumlu bloklar bolume gore yerlesiyor. Blok
+     buyuyunce tasiyor: "Anlari Takip Edin" kutusu bilgi kartlarinin uzerine
+     bindi, "Wedding shoot" bir sonraki bolumle cakisti. Program kartlarinin
+     kapsayicisi sabit yukseklikte olmadigi icin orada guvenli.
+
+     Geri kalan sizintiyi duzene hic dokunmadan, sayfa konumunu komsuya gore
+     kaydirarak cozuyoruz (bkz. noktala). */
   function kartAraliginiAc() {
+    araligiAyarla('[data-framer-name="Event Cards"]', 1);
+    kartlariUzaklastir();
+  }
+
+  /* Kart bloguna komsularindan pay birak.
+
+     Kart araligini acmak kartlari birbirinden ayirdi ama blogun ilk ve son
+     karti komsu sahnelerle ayni sayfaya dusmeye devam ediyordu: davetiye
+     sayfasinin altinda ilk kartin tepesi goruluyor, ilk kartin sayfasi da
+     davetiyeden kacmak icin yukari yapisiyordu. Blogun disina da yarim
+     sayfalik pay koyuyoruz.
+
+     Yalnizca burada guvenli: Section 2'nin yuksekligi otomatik, blok buyuyunce
+     Section 3 asagi kayiyor. Section 3 (2542px) ve Section 4 (2728px) sabit
+     yukseklikte oldugu icin oradaki bloklara ayni seyi yapmak icerigi
+     tasiriyor ve mutlak konumlu kutular ust uste biniyor - denendi. */
+  function kartlariUzaklastir() {
     var e = document.querySelector('[data-framer-name="Event Cards"]');
     if (!e || !e.children.length) return;
-    var vh = window.innerHeight;
+    e.style.marginTop = '';
+    e.style.marginBottom = '';
     var kart = e.children[0].getBoundingClientRect().height;
-    if (!kart || kart >= vh) { e.style.rowGap = ''; return; }
-    e.style.rowGap = Math.round(vh - kart) + 'px';
+    var vh = window.innerHeight;
+    if (!kart || kart >= vh) return;
+    var pay = Math.ceil((vh - kart) / 2);
+    e.style.marginTop = pay + 'px';
+    e.style.marginBottom = pay + 'px';
   }
 
   function esitBol(a, k) {
@@ -1038,9 +1087,28 @@
     return birlesik;
   }
 
-  function noktala(b, vh) {
+  /* Bir sahneyi sayfa konum(lar)ina cevir.
+
+     Ekrana sigan sahne normalde ortalanir; ama ortalayinca altta ve ustte
+     kalan boslugu komsu sahne dolduruyordu (davetiye sayfasinda ilk etkinlik
+     kartinin tepesi goruluyordu). Bu yuzden sayfayi, sahneyi tam icinde
+     tutmak sartiyla, komsulari disarida birakacak sekilde kaydiriyoruz.
+     Yer yetmiyorsa sahnenin tamami gorunur kalir; oncelik onda. */
+  function noktala(b, vh, onceki, sonraki) {
     var h = b.alt - b.ust;
-    if (h <= vh * TEKNOK) return [b.ust - (vh - h) / 2];
+    if (h <= vh * TEKNOK) {
+      var alt = b.alt - vh;                 // sahnenin alti ekranin altinda
+      var ust = b.ust;                      // sahnenin ustu ekranin ustunde
+      if (alt > ust) { var t = alt; alt = ust; ust = t; }
+      var hedef = b.ust - (vh - h) / 2;     // tercih: ortala
+
+      // Komsulari disarida birakmayi dene.
+      var kAlt = onceki ? Math.max(alt, onceki.alt) : alt;
+      var kUst = sonraki ? Math.min(ust, sonraki.ust - vh) : ust;
+      if (kAlt <= kUst) { alt = kAlt; ust = kUst; }
+
+      return [Math.max(alt, Math.min(ust, hedef))];
+    }
     var son = b.alt - vh;
     var adet = Math.max(2, Math.ceil((son - b.ust) / (vh * ADIM)) + 1);
     var p = [];
@@ -1054,7 +1122,7 @@
     var b = bloklar(), ham = [0];
 
     for (var i = 0; i < b.length; i++) {
-      var p = noktala(b[i], vh);
+      var p = noktala(b[i], vh, b[i - 1], b[i + 1]);
       for (var j = 0; j < p.length; j++) {
         ham.push(Math.max(0, Math.min(en, Math.round(p[j]))));
       }
@@ -1069,26 +1137,36 @@
     while (tek.length > 1 && en - tek[tek.length - 1] < vh * DIPYAKIN) tek.pop();
     tek.push(en);
 
-    // Iki sayfa arasi bir ekrandan genisse aralara sayfa serpistir; yoksa
-    // aradaki icerik hic gorunmeden atlanir.
-    var dolu = [];
-    for (var m = 0; m < tek.length; m++) {
-      dolu.push(tek[m]);
-      if (m + 1 < tek.length) {
-        var bosluk = tek[m + 1] - tek[m];
-        if (bosluk > vh * 1.05) {
-          var ek = Math.ceil(bosluk / (vh * 0.95)) - 1;
-          for (var q = 1; q <= ek; q++) {
-            dolu.push(Math.round(tek[m] + bosluk * q / (ek + 1)));
-          }
-        }
-      }
-    }
-    return dolu.sort(function (x, y) { return x - y; });
+    // Sahneler arasina dolgu sayfasi KOYMUYORUZ. Onceki surumde iki sahne
+    // arasi bir ekrandan genisse araya sayfa serpistiriliyordu; bu sayfalar
+    // sahnenin ortasina denk gelip metni yariyordu (ornegin "Sizi aramizda
+    // gormeyi..." basligi alt kenardan kesiliyordu). Aradaki bolgeler zaten
+    // dekoratif zemin; atlanmalari sorun degil, kesilmeleri sorundu.
+    return tek;
+  }
+
+  /* Kaydirma cubugunu gizle.
+
+     Kaydirma alanini artik gorunmez bir serit yaratiyor; tarayici bunu normal
+     bir sayfa sanip kenara kaydirma cubugu koyuyordu. Masaustu cercevesinde
+     bu, iframe'in sag kenarinda beyaz bir bant olarak goruluyordu ve
+     cerceveden 15px calıyordu. Serit zaten sahte oldugu icin cubugun bilgi
+     degeri de yok. */
+  function cubuguGizle() {
+    if (document.getElementById('tr-cubuk-gizle')) return;
+    var st = document.createElement('style');
+    st.id = 'tr-cubuk-gizle';
+    st.textContent =
+      'html{scrollbar-width:none;-ms-overflow-style:none}' +
+      'html::-webkit-scrollbar{width:0;height:0;display:none}' +
+      'body{scrollbar-width:none}' +
+      'body::-webkit-scrollbar{width:0;height:0;display:none}';
+    document.head.appendChild(st);
   }
 
   // Icerigi sabit pencereye al ve kaydirma seridini kur.
   function pencereyiKur() {
+    cubuguGizle();
     pencere.style.position = 'fixed';
     pencere.style.top = '0';
     pencere.style.left = '0';
