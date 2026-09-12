@@ -847,6 +847,7 @@
 
   var ID      = 'tr-sayfa-serit';
   var TELEFON = 430;         // masaustu cercevesinin genisligi (px)
+  var HERO_KES= 0.575;       // hero kompozisyonunun dogal kesim yeri (oran)
   var ESIK    = 810;         // Framer'in mobil breakpoint siniri
   var YAKIN   = 60;          // bu kadar yakin iki nokta tek sayfa sayilir (px)
   var SIGAR   = 0.95;        // paketlemede bir sayfaya sigan oran
@@ -855,7 +856,7 @@
   var DIPYAKIN= 0.30;        // sayfa sonuna bu kadar yakin nokta dibe katilir
 
   var SAHNE = [
-    ['[data-framer-name="Section 1"]',              'tek'],
+    ['[data-framer-name="Section 1"]',              'bol'],
     ['[data-framer-name="Invite"]',                 'tek'],
     ['[data-framer-name="Event Cards"]',            'satir'],
     ['[data-framer-name="CTA - Location"]',         'tek'],
@@ -977,9 +978,28 @@
 
      Geri kalan sizintiyi duzene hic dokunmadan, sayfa konumunu komsuya gore
      kaydirarak cozuyoruz (bkz. noktala). */
+  /* Hero'nun alt yarimina asagidan pay birak.
+
+     Alt yarim (600px) ekrandan kisa oldugu icin ortalaninca ustte satonun
+     etegi, altta davetiye bolumunun deseni goruluyordu. Section 1'in altina
+     bir ekran dolusu pay koyunca sayfa tam alt yarimda duruyor.
+     Bu guvenli: Main akista, Section 1 buyuyunce Section 2 asagi kayiyor
+     (olculdu: Invite 1411 -> 1658, cakisma yok). */
+  function heroyaPayBirak() {
+    var e = document.querySelector('[data-framer-name="Section 1"]');
+    if (!e) return;
+    e.style.marginBottom = '';
+    var boy = e.getBoundingClientRect().height;
+    var altYarim = boy * (1 - HERO_KES);
+    var vh = window.innerHeight;
+    if (!boy || altYarim >= vh) return;
+    e.style.marginBottom = Math.ceil(vh - altYarim) + 'px';
+  }
+
   function kartAraliginiAc() {
     araligiAyarla('[data-framer-name="Event Cards"]', 1);
     kartlariUzaklastir();
+    heroyaPayBirak();
   }
 
   /* Kart bloguna komsularindan pay birak.
@@ -1040,6 +1060,24 @@
       if (SAHNE[i][1] === 'tek') {
         var b = olc(el);
         if (b.alt - b.ust >= 60) out.push(b);
+        continue;
+      }
+
+      /* Hero tek bir uzun kompozisyon (1408px) ama icinde iki ayri sahne var:
+         ust yarim (baslik + kemer + balon + sato) ve alt yarim (ay + yuzuk +
+         cift + periler). Tek blok sayilinca ekran yuksekligine gore rastgele
+         bolunuyor ve satonun etegi alt sayfanin tepesinde kaliyordu.
+
+         Kesim yerini tahmin etmedik: sanat eserinin satir enerjisini olcup
+         (dikey + yatay gradyan, kenar suslemeleri dislanarak) en sakin satiri
+         bulduk. Hem 390px hem 430px genislikte ayni yere denk geliyor
+         (y=810/811, oran 0.575) cunku hero sabit yukseklikte. */
+      if (SAHNE[i][1] === 'bol') {
+        var hb = olc(el), boy = hb.alt - hb.ust;
+        if (boy < 60) continue;
+        var orta = hb.ust + boy * HERO_KES;
+        out.push({ ust: hb.ust, alt: orta });
+        out.push({ ust: orta, alt: hb.alt });
         continue;
       }
 
