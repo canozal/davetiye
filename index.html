@@ -1076,8 +1076,8 @@
         var hb = olc(el), boy = hb.alt - hb.ust;
         if (boy < 60) continue;
         var orta = hb.ust + boy * HERO_KES;
-        out.push({ ust: hb.ust, alt: orta });
-        out.push({ ust: orta, alt: hb.alt });
+        out.push({ ust: hb.ust, alt: orta, doldur: true });
+        out.push({ ust: orta, alt: hb.alt, doldur: true });
         continue;
       }
 
@@ -1118,8 +1118,10 @@
       var son = birlesik[birlesik.length - 1];
       if (son && temiz[t].alt - son.ust <= vh * SIGAR) {
         son.alt = Math.max(son.alt, temiz[t].alt);
+        son.doldur = false;          // birlesince artik tek bir sahne degil
       } else {
-        birlesik.push({ ust: temiz[t].ust, alt: temiz[t].alt });
+        // doldur bayragi tasinmali: hero bandlari bununla ekrana buyutuluyor
+        birlesik.push({ ust: temiz[t].ust, alt: temiz[t].alt, doldur: temiz[t].doldur });
       }
     }
     return birlesik;
@@ -1134,6 +1136,20 @@
      Yer yetmiyorsa sahnenin tamami gorunur kalir; oncelik onda. */
   function noktala(b, vh, onceki, sonraki) {
     var h = b.alt - b.ust;
+
+    /* Hero bandini ekrana doldur.
+
+       Hero tam kenardan kenara bir illustrasyon; ekrandan kisa kalan yarimi
+       ortalayinca altta koyu bir bosluk kaliyordu (telefonda ekranin ~%29'u).
+       Bandi ekran yuksekligine buyutuyoruz. Yanlardan kirpiliyor ama altin
+       cerceve iki yanda gorunmeye devam ediyor.
+
+       Bu yalnizca hero icin: etkinlik kartlari kendi zemini uzerinde duran
+       ayri kartlar, onlari buyutmek karti yanlardan kirpardi. */
+    if (b.doldur && h > 0 && vh / h > 1.05) {
+      return [{ k: b.ust, o: vh / h }];
+    }
+
     if (h <= vh * TEKNOK) {
       var alt = b.alt - vh;                 // sahnenin alti ekranin altinda
       var ust = b.ust;                      // sahnenin ustu ekranin ustunde
@@ -1145,35 +1161,38 @@
       var kUst = sonraki ? Math.min(ust, sonraki.ust - vh) : ust;
       if (kAlt <= kUst) { alt = kAlt; ust = kUst; }
 
-      return [Math.max(alt, Math.min(ust, hedef))];
+      return [{ k: Math.max(alt, Math.min(ust, hedef)), o: 1 }];
     }
     var son = b.alt - vh;
     var adet = Math.max(2, Math.ceil((son - b.ust) / (vh * ADIM)) + 1);
     var p = [];
-    for (var i = 0; i < adet; i++) p.push(b.ust + (son - b.ust) * i / (adet - 1));
+    for (var i = 0; i < adet; i++) p.push({ k: b.ust + (son - b.ust) * i / (adet - 1), o: 1 });
     return p;
   }
 
   function noktalar() {
     var vh = window.innerHeight;
     var en = Math.max(0, icerikBoyu() - vh);
-    var b = bloklar(), ham = [0];
+    var b = bloklar(), ham = [{ k: 0, o: 1 }];
 
     for (var i = 0; i < b.length; i++) {
       var p = noktala(b[i], vh, b[i - 1], b[i + 1]);
       for (var j = 0; j < p.length; j++) {
-        ham.push(Math.max(0, Math.min(en, Math.round(p[j]))));
+        var o = p[j].o || 1;
+        // Olcekli sayfada kaydirma siniri da olcege gore buyur.
+        var enO = Math.max(0, icerikBoyu() * o - vh) / o;
+        ham.push({ k: Math.max(0, Math.min(enO, Math.round(p[j].k))), o: o });
       }
     }
-    ham.push(en);
-    ham.sort(function (x, y) { return x - y; });
+    ham.push({ k: en, o: 1 });
+    ham.sort(function (x, y) { return x.k - y.k; });
 
     var tek = [];
     for (var k = 0; k < ham.length; k++) {
-      if (!tek.length || ham[k] - tek[tek.length - 1] > YAKIN) tek.push(ham[k]);
+      if (!tek.length || ham[k].k - tek[tek.length - 1].k > YAKIN) tek.push(ham[k]);
     }
-    while (tek.length > 1 && en - tek[tek.length - 1] < vh * DIPYAKIN) tek.pop();
-    tek.push(en);
+    while (tek.length > 1 && en - tek[tek.length - 1].k < vh * DIPYAKIN) tek.pop();
+    tek.push({ k: en, o: 1 });
 
     // Sahneler arasina dolgu sayfasi KOYMUYORUZ. Onceki surumde iki sahne
     // arasi bir ekrandan genisse araya sayfa serpistiriliyordu; bu sayfalar
@@ -1243,7 +1262,59 @@
     i = sinirla(i);
     if (i === indeks && !ani) return;
     indeks = i;
-    pencere.scrollTo({ top: sayfa[i], behavior: ani ? 'auto' : 'smooth' });
+    var s = sayfa[i], o = s.o || 1;
+    olcegiUygula(o, s.k);
+    pencere.scrollTo({ top: Math.round(s.k * o), behavior: ani ? 'auto' : 'smooth' });
+  }
+
+  /* Olcegi CSS degiskeniyle uygula.
+
+     Kok elemana inline stil yazmiyoruz: React yeniden render edince siliniyor.
+     Degisken #main uzerinde duruyor, kural stylesheet'te; ikisine de React
+     dokunmuyor.
+
+     Muzik butonu sticky ve 620px'den yapisiyor; olcekli sayfada ekran disina
+     cikiyordu. Tarayici, olcekli bir kapsayici icindeki sticky ogeyi
+     konumlarken scrollTop'u olceksiz sayiyor: ekranda gorunen yer
+     y = (scrollTop + top) * o - scrollTop. Iki olcumle dogrulandi
+     (top=620 -> y=1347, top=440 -> y=1091). Bunu tersine cevirince
+     istenen y icin  top = y/o + k*(1-o)  cikiyor (k = sayfanin olceksiz
+     konumu). Tarayicilar arasi fark olursa asagidaki olcum duzeltmesi
+     devreye giriyor. */
+  var muzikUst = null;
+  function olcegiUygula(o, k) {
+    if (!document.getElementById('tr-olcek-css')) {
+      var st = document.createElement('style');
+      st.id = 'tr-olcek-css';
+      st.textContent =
+        '#main > [data-framer-root]{transform:scale(var(--tr-o,1));transform-origin:50% 0}' +
+        '#main [data-framer-name="Music"]{top:var(--tr-muzik,620px) !important}';
+      document.head.appendChild(st);
+    }
+    if (muzikUst === null) {
+      var mz = document.querySelector('[data-framer-name="Music"]');
+      muzikUst = mz ? (parseFloat(getComputedStyle(mz).top) || 620) : 620;
+    }
+    pencere.style.setProperty('--tr-o', o);
+    pencere.style.setProperty('--tr-muzik',
+      Math.round(muzikUst / o + (k || 0) * (1 - o)) + 'px');
+    muzigiDuzelt(o);
+  }
+
+  // Guvenlik agi: gecis bitince butonu olcup gerekirse yerine cek.
+  var muzikZaman = null;
+  function muzigiDuzelt(o) {
+    clearTimeout(muzikZaman);
+    if (o === 1) return;
+    muzikZaman = setTimeout(function () {
+      var mz = document.querySelector('[data-framer-name="Music"]');
+      if (!mz) return;
+      var y = mz.getBoundingClientRect().top;
+      if (y > 0 && y < window.innerHeight) return;      // zaten yerinde
+      var suan = parseFloat(pencere.style.getPropertyValue('--tr-muzik')) || 0;
+      pencere.style.setProperty('--tr-muzik',
+        Math.round(suan + (muzikUst - y) / o) + 'px');
+    }, 900);
   }
 
   function goster(zorla) {
