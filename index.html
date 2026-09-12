@@ -846,6 +846,8 @@
   'use strict';
 
   var ID      = 'tr-sayfa-serit';
+  var TELEFON = 430;         // masaustu cercevesinin genisligi (px)
+  var ESIK    = 810;         // Framer'in mobil breakpoint siniri
   var YAKIN   = 60;          // bu kadar yakin iki nokta tek sayfa sayilir (px)
   var SIGAR   = 0.95;        // paketlemede bir sayfaya sigan oran
   var TEKNOK  = 1.20;        // blok ekranin bu katindan kisaysa tek sayfa
@@ -865,6 +867,53 @@
     ['[data-framer-name="CTA 3 - Instagram"]',      'tek'],
     ['[data-framer-name="Footer"] .framer-572pmh',  'tek']
   ];
+
+  /* Masaustunde mobil gorunum.
+
+     Sablon genis ekranda 1500px'e yayiliyor ve dikey illustrasyon genis bir
+     kirpima donuyordu. Framer'in duzeni tamamen media query'ye bagli: kok
+     sinif her genislikte "framer-1457vnl" kaliyor, ayri bir mobil sinifi yok.
+     CSS zoom ile viewport'u kandirmayi denedik, media query'yi etkilemiyor.
+     Geriye tek guvenilir yol kaliyor: viewport'u gercekten daraltmak. Sayfa,
+     telefon genisliginde bir cerceve icinde kendini yeniden yukluyor; icerideki
+     kopya mobil breakpoint'e dustugu icin mobil duzeni ve sayfalamayi
+     calistiriyor. Cerceve icindeki kopya (self !== top) bunu tekrar yapmaz. */
+  function cerceveModu() {
+    return window.self === window.top && window.innerWidth >= ESIK;
+  }
+
+  function telefonCercevesiKur() {
+    var kabuk = document.createElement('div');
+    kabuk.id = 'tr-telefon';
+    kabuk.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;' +
+      'justify-content:center;background:rgb(2,41,56);z-index:2147483000';
+    var cer = document.createElement('iframe');
+    cer.src = location.href;
+    cer.title = document.title;
+    cer.style.cssText = 'width:' + TELEFON + 'px;height:100%;border:0;display:block;' +
+      'background:transparent;box-shadow:0 0 70px rgba(0,0,0,.55)';
+    kabuk.appendChild(cer);
+    document.body.appendChild(kabuk);
+    var ana = document.getElementById('main');
+    if (ana) ana.style.display = 'none';
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+  }
+
+  if (cerceveModu()) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', telefonCercevesiKur);
+    } else {
+      telefonCercevesiKur();
+    }
+    // Masaustu <-> mobil sinirini gecince duzeni bastan kurmak gerekiyor.
+    var acik = true;
+    window.addEventListener('resize', function () {
+      var simdi = cerceveModu();
+      if (simdi !== acik) { acik = simdi; location.reload(); }
+    });
+    return;   // kabuk sayfasinda sayfalama calismaz, o is cercevenin icinde
+  }
 
   // Hareket azaltma tercihi varsa sayfaya hic dokunma: normal kaydirma kalsin.
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
