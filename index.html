@@ -847,7 +847,7 @@
 
   var ID      = 'tr-sayfa-serit';
   var SURE    = 620;         // gecis suresi (ms)
-  var BUYUT   = 1.35;        // ekrani doldururken izin verilen en fazla buyutme
+  var BUYUT   = 1.10;        // ekrani doldururken izin verilen en fazla buyutme
   var TELEFON = 430;         // masaustu cercevesinin genisligi (px)
   /* Hero kompozisyonunun dogal kesim yerleri (hero yuksekliginin orani).
      Sanat eserinin satir enerjisi olculerek bulundu: dikey + yatay gradyan,
@@ -1376,6 +1376,23 @@
     pencere.style.bottom = '0';
     pencere.style.height = '';
     pencere.style.overflow = 'hidden';
+    /* Yatay kaymayi imkansiz kil.
+
+       Sahneyi ekrana sigdirmak icin buyuttugumuzde icerik yanlara tasiyor
+       (olculdu: 1.03 olcekte 7px, 1.30 olcekte 59px) ve bu yatay bir kaydirma
+       alani yaratiyor. Telefonda hafif capraz bir parmak hareketi icerigi sola
+       kaydirip sag kenarda koyu bir bant birakiyordu; sanat eserinin sol
+       kenari da kirpiliyordu.
+       touch-action:pan-y parmakla yatay kaydirmayi bastan engelliyor,
+       asagidaki dinleyici de her ihtimale karsi yatay konumu sifirda tutuyor. */
+    pencere.style.touchAction = 'pan-y';
+    pencere.style.overscrollBehaviorX = 'none';
+    if (!pencere.__trYatay) {
+      pencere.__trYatay = true;
+      pencere.addEventListener('scroll', function () {
+        if (pencere.scrollLeft !== 0) pencere.scrollLeft = 0;
+      }, { passive: true });
+    }
     pencere.style.zIndex = '1';
 
     serit = document.getElementById(ID);
