@@ -846,6 +846,7 @@
   'use strict';
 
   var ID      = 'tr-sayfa-serit';
+  var SURE    = 620;         // gecis suresi (ms)
   var TELEFON = 430;         // masaustu cercevesinin genisligi (px)
   /* Hero kompozisyonunun dogal kesim yerleri (hero yuksekliginin orani).
      Sanat eserinin satir enerjisi olculerek bulundu: dikey + yatay gradyan,
@@ -1312,14 +1313,64 @@
     return i < 0 ? 0 : (i > sayfa.length - 1 ? sayfa.length - 1 : i);
   }
 
+  /* Sayfa gecisi.
+
+     Tarayicinin kendi scrollTo({behavior:'smooth'}) animasyonunu kullaniyorduk;
+     olcunce hareketin cirkinligi ortaya cikti: 385 -> 210 -> 77 -> 31 -> 7 px.
+     Yani aninda en yuksek hizla firliyor, sonra surunerek duruyor. Yumusak
+     girisi yok. Ayrica olcek ayni anda "pat" diye uygulaniyordu: hero
+     sayfasina gecerken daha ilk karede olcek 1.296'ya sicriyor, icerik ondan
+     sonra kayiyordu.
+
+     Artik gecisi kendimiz suruyoruz: yumusak baslayip yumusak biten bir egri
+     (easeInOutCubic) ve konum ile olcek ayni ilerlemeyle birlikte
+     hareket ediyor.
+
+     Ara degerler olceksiz uzayda hesaplanip her karede k*o'ya cevriliyor;
+     boylece olcek degisirken sahne kaymiyor. */
+  var suanK = 0, suanO = 1, animId = null;
+
+  function durdur() {
+    if (animId) { cancelAnimationFrame(animId); animId = null; }
+  }
+
+  function yerlestir(k, o) {
+    suanK = k; suanO = o;
+    olcegiUygula(o, k);
+    pencere.scrollTop = Math.round(k * o);
+  }
+
   function gecis(i, ani) {
     i = sinirla(i);
     if (i === indeks && !ani) return;
     indeks = i;
-    var s = sayfa[i], o = s.o || 1;
-    olcegiUygula(o, s.k);
-    pencere.scrollTo({ top: Math.round(s.k * o), behavior: ani ? 'auto' : 'smooth' });
+    var s = sayfa[i], hedefK = s.k, hedefO = s.o || 1;
+
+    durdur();
+    if (ani) { yerlestir(hedefK, hedefO); return; }   // ilk yerlesim: animasyonsuz
+
+    var basK = suanK, basO = suanO, t0 = null;
+    function adim(simdi) {
+      if (t0 === null) t0 = simdi;
+      var p = (simdi - t0) / SURE;
+      if (p > 1) p = 1;
+      // easeInOutCubic: yavas basla, hizlan, yavas dur
+      var e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+      yerlestir(basK + (hedefK - basK) * e, basO + (hedefO - basO) * e);
+      if (p < 1) animId = requestAnimationFrame(adim);
+      else animId = null;
+    }
+    animId = requestAnimationFrame(adim);
   }
+
+  // Sekme arka plana alininca requestAnimationFrame durur; geri donuldugunde
+  // gecis yarida kalmasin diye hedefe oturtuyoruz.
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden && animId && sayfa[indeks]) {
+      durdur();
+      yerlestir(sayfa[indeks].k, sayfa[indeks].o || 1);
+    }
+  });
 
   /* Olcegi CSS degiskeniyle uygula.
 
