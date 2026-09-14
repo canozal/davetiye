@@ -936,10 +936,15 @@
   var sayfa = [];      // her sayfanin icerik icindeki konumu (px)
   var indeks = -1;
   var serit = null;
-  // Sayfa yuksekligi piksel olarak saklanir. CSS'te 100vh kullansaydik iOS'ta
-  // 100vh adres cubugu acikken bile buyuk viewport'u verdigi icin JS'in
-  // innerHeight'i ile uyusmazdi; indeks matematigi kayardi.
-  var sayfaYuk = 0;
+  /* Sayfa adimi.
+
+     Serit cocuklari 100dvh yuksekliginde; dvh adres cubugu acilip kapandikca
+     degisiyor. Indeks matematigi sabit bir piksele bolerse ikisi birbirinden
+     kopuyor ve yanlis sayfaya gidiliyor (762'de kurulup 852'ye uzayinca
+     10. sayfa 11 olarak okunuyordu). Bu yuzden adim her zaman canli
+     innerHeight'tan okunur - dvh ile ayni degerdir. */
+  function adim() { return window.innerHeight || 1; }
+  var sayfaYuk = 0;   // yalnizca eski tarayicilar icin px yedegi
 
   function gorunur(e) {
     var s = getComputedStyle(e);
@@ -1385,7 +1390,14 @@
     serit.innerHTML = '';
     for (var i = 0; i < sayfa.length; i++) {
       var d = document.createElement('div');
-      d.style.cssText = 'height:' + sayfaYuk + 'px;scroll-snap-align:start';
+      /* scroll-snap-stop:always cocuk ogeye konur (kapsayiciya konursa hicbir
+         sey yapmaz) ve her jestte tam bir sayfa durdurur; tarayici birden
+         fazla sayfayi atlayamaz. Desteklemeyen tarayicida zararsizca yok
+         sayilir. Yukseklikte 100dvh: iOS'ta 100vh adres cubugu acikken
+         60-100px tasma demek; px'e kilitlemek de cubuk gizlenince altta
+         bosluk biraktiriyordu. */
+      d.style.cssText = 'height:' + sayfaYuk + 'px;height:100dvh;' +
+                        'scroll-snap-align:start;scroll-snap-stop:always';
       serit.appendChild(d);
     }
     document.documentElement.style.scrollSnapType = 'y mandatory';
@@ -1508,7 +1520,7 @@
   }
 
   function goster(zorla) {
-    gecis(Math.round(window.scrollY / sayfaYuk), zorla);
+    gecis(Math.round(window.scrollY / adim()), zorla);
   }
 
   // Dokunma yardimcisi.
@@ -1521,7 +1533,7 @@
   window.addEventListener('touchstart', function (e) {
     if (e.touches.length !== 1) { dokBas = null; return; }
     dokBas = e.touches[0].clientY;
-    dokSayfa = Math.round(window.scrollY / sayfaYuk);
+    dokSayfa = Math.round(window.scrollY / adim());
   }, { passive: true });
 
   window.addEventListener('touchend', function (e) {
@@ -1532,7 +1544,7 @@
     if (Math.abs(fark) < 40) return;          // dokunus/tiklama, kaydirma degil
     var hedef = sinirla(dokSayfa + (fark > 0 ? 1 : -1));
     gecis(hedef, false);                       // gorsel gecisi hemen baslat
-    window.scrollTo({ top: hedef * sayfaYuk, behavior: 'auto' });
+    window.scrollTo({ top: hedef * adim(), behavior: 'auto' });
   }, { passive: true });
 
   function kur() {
@@ -1577,7 +1589,7 @@
         var i = sinirla(kalinan);
         indeks = -1;
         gecis(i, true);
-        window.scrollTo({ top: i * sayfaYuk, behavior: 'auto' });
+        window.scrollTo({ top: i * adim(), behavior: 'auto' });
       }
     }, 450);
   });
