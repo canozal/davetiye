@@ -847,6 +847,7 @@
 
   var ID      = 'tr-sayfa-serit';
   var SURE    = 620;         // gecis suresi (ms)
+  var BUYUT   = 1.35;        // ekrani doldururken izin verilen en fazla buyutme
   var TELEFON = 430;         // masaustu cercevesinin genisligi (px)
   /* Hero kompozisyonunun dogal kesim yerleri (hero yuksekliginin orani).
      Sanat eserinin satir enerjisi olculerek bulundu: dikey + yatay gradyan,
@@ -1003,10 +1004,31 @@
     e.style.marginBottom = Math.ceil(vh - altYarim) + 'px';
   }
 
+  /* Bilgi kartlarini ekrana sigdir.
+
+     Dort bilgi karti arasindaki 159px'lik aralik yuzunden blok 1153px oluyor
+     ve ekrana sigmiyordu. Araligi DARALTIYORUZ; icerigi kisaltmak guvenli
+     (buyutmek Section 4'un sabit yuksekligini tasirip mutlak konumlu kutulari
+     ust uste bindiriyordu - denendi ve geri alindi). */
+  function bilgiKartlariniSigdir() {
+    var e = document.querySelector('[data-framer-name="Information"]');
+    if (!e || e.children.length < 2) return;
+    e.style.rowGap = '';
+    var vh = window.innerHeight;
+    var boy = e.getBoundingClientRect().height;
+    if (boy <= vh * 0.96) return;                    // zaten siğiyor
+    var aralik = parseFloat(getComputedStyle(e).rowGap) || 0;
+    var n = e.children.length - 1;
+    if (!n || !aralik) return;
+    var yeni = Math.max(8, aralik - (boy - vh * 0.96) / n);
+    e.style.rowGap = Math.round(yeni) + 'px';
+  }
+
   function kartAraliginiAc() {
     araligiAyarla('[data-framer-name="Event Cards"]', 1);
     kartlariUzaklastir();
     heroyaPayBirak();
+    bilgiKartlariniSigdir();
   }
 
   /* Kart bloguna komsularindan pay birak.
@@ -1098,6 +1120,10 @@
 
       if (SAHNE[i][1] === 'tek') {
         var b = olc(el);
+        // Kart disindaki sahneler tam kenardan kenara panel; ekrani
+        // doldurmalari gerekiyor ki komsu sahne kenarlardan sizmasin.
+        b.doldur = true;
+        b.metinEn = metinGenisligi(el);
         if (b.alt - b.ust >= 60) out.push(b);
         continue;
       }
@@ -1162,10 +1188,14 @@
       var son = birlesik[birlesik.length - 1];
       if (son && temiz[t].alt - son.ust <= vh * SIGAR) {
         son.alt = Math.max(son.alt, temiz[t].alt);
-        son.doldur = false;          // birlesince artik tek bir sahne degil
+        // Birlesen sahneler tek panel degil ama yine de ekrani doldurmalari
+        // gerekiyor; en genis metin ikisinin buyugu olur.
+        son.metinEn = Math.max(son.metinEn || 0, temiz[t].metinEn || 0);
       } else {
-        // doldur bayragi tasinmali: hero bandlari bununla ekrana buyutuluyor
-        birlesik.push({ ust: temiz[t].ust, alt: temiz[t].alt, doldur: temiz[t].doldur });
+        // doldur ve metinEn tasinmali: biri ekrana buyutmeyi acar,
+        // digeri buyutmeyi yaziyi kirpmayacak sekilde sinirlar.
+        birlesik.push({ ust: temiz[t].ust, alt: temiz[t].alt,
+                        doldur: temiz[t].doldur, metinEn: temiz[t].metinEn });
       }
     }
     return birlesik;
@@ -1178,6 +1208,22 @@
      kartinin tepesi goruluyordu). Bu yuzden sayfayi, sahneyi tam icinde
      tutmak sartiyla, komsulari disarida birakacak sekilde kaydiriyoruz.
      Yer yetmiyorsa sahnenin tamami gorunur kalir; oncelik onda. */
+  /* Sahnedeki en genis metin satiri.
+
+     Ekrani doldurmak icin buyuturken yaziyi yanlardan kirpmamak gerekiyor:
+     "Gelin & Damat" sahnesi 1.335 kat buyutulunce paragrafin sol ve sag
+     kenarlari ekran disinda kaliyordu. Buyutme bu olcuye gore sinirlaniyor. */
+  function metinGenisligi(el) {
+    var en = 0;
+    var d = el.querySelectorAll('p,h1,h2,h3,h4');
+    for (var i = 0; i < d.length; i++) {
+      if (!(d[i].innerText || '').trim()) continue;
+      var r = d[i].getBoundingClientRect();
+      if (r.width > en) en = r.width;
+    }
+    return en;
+  }
+
   function noktala(b, vh, onceki, sonraki) {
     var h = b.alt - b.ust;
 
@@ -1190,8 +1236,23 @@
 
        Bu yalnizca hero icin: etkinlik kartlari kendi zemini uzerinde duran
        ayri kartlar, onlari buyutmek karti yanlardan kirpardi. */
-    if (b.doldur && h > 0 && vh / h > 1.05) {
-      return [{ k: b.ust, o: vh / h }];
+    /* Ekrani dolduran yerlesim.
+
+       Sahne ekrandan kisaysa buyutup dolduruyoruz; ortalayinca ustte ve altta
+       kalan boslugu komsu sahne dolduruyordu (davetiye sayfasinin tepesinde
+       hero'nun cicekleri, bilgi sayfasinin altinda Instagram basligi
+       goruluyordu). Buyutme ust sinirla kapali: fazlasi metni yanlardan
+       kirpardi. */
+    if (b.doldur && h > 0 && vh / h > 1.02) {
+      var izin = BUYUT;
+      if (b.metinEn > 0) {
+        izin = Math.min(izin, (window.innerWidth - 8) / b.metinEn);
+      }
+      var o = Math.min(vh / h, izin);
+      if (o > 1.02) {
+        // Tam dolduramiyorsak sahneyi ortalayip kalan bosluğu esit paylas.
+        return [{ k: b.ust - (vh / o - h) / 2, o: o }];
+      }
     }
 
     /* Ekrandan uzun sahneyi ikiye bolmek yerine kucultup sigdir.
@@ -1201,8 +1262,23 @@
        cok yakin iki sayfaya bolunuyordu; hem tokezliyor hem icerigi kesiyordu.
        Kucultunce sahne tek sayfada butun halde goruluyor, yanlarda zemin
        kaliyor - etkinlik kartlarindaki gorunumun aynisi. */
+    /* Ekrandan uzun sahne: kucultmek yerine tam ekran dilimlere bol.
+
+       Kucultunce sahne daraliyor ve iki yanda zemin bandi kaliyordu (bilgi
+       kartlari sayfasinda yesil seritler). Dilimler tam ekran oldugu icin
+       bant olusmuyor; dilimler bir miktar ust uste biniyor, bu da okurken
+       baglami koruyor. */
+    /* Ekrandan uzun sahne: tek sayfa, ortadan kirpilmis.
+
+       Iki secenek denendi ve elendi:
+       - Kucultup sigdirmak: sahne daraliyor, iki yanda zemin bandi kaliyordu
+         (bilgi kartlari sayfasindaki yesil seritler).
+       - Tam ekran dilimlere bolmek: dilimler %70-80 ortustugu icin ayni sayfa
+         iki kez geliyordu (Yol tarifi, Anlari Takip Edin... hepsi ciftlenmisti).
+       Ortadan kirpma ekrani tam dolduruyor, sayfayi ciftlemiyor; bu panellerin
+       icerigi ortada, kirpilan kisim cerceve suslemesi. */
     if (h > vh) {
-      return [{ k: b.ust, o: vh / h }];
+      return [{ k: b.ust + (h - vh) / 2, o: 1 }];
     }
 
     if (h <= vh * TEKNOK) {
@@ -1284,7 +1360,16 @@
     pencere.style.left = '0';
     pencere.style.right = '0';
     pencere.style.width = '100%';
-    pencere.style.height = sayfaYuk + 'px';
+    /* Pencere yuksekligi sabit piksel DEGIL, bottom:0 ile ekrana yapisik.
+
+       Onceden yukseklik kurulum anindaki innerHeight'a kilitleniyordu. Mobilde
+       kaydirirken Safari'nin adres cubugu gizlenince ekran uzuyor, pencere
+       kisa kaliyor ve altta 62-90px acikta kaliyordu; oradan govdenin zemin
+       gradyani (koyu maviden acik yesile) bir bant olarak goruluyordu.
+       Olculdu: 762px'te kurulup 852px'e uzayinca altta 90px BODY goruluyor.
+       top:0 + bottom:0 ile pencere her zaman ekrani kapliyor. */
+    pencere.style.bottom = '0';
+    pencere.style.height = '';
     pencere.style.overflow = 'hidden';
     pencere.style.zIndex = '1';
 
@@ -1471,13 +1556,30 @@
   if (document.readyState === 'complete') kurPlanla();
   else window.addEventListener('load', kurPlanla);
 
-  // Mobilde adres cubugu acilip kapaninca resize tetiklenir; kucuk yukseklik
-  // degisimlerinde yeniden kurmuyoruz ki sayfa ortasinda ziplamasin.
-  var sonG = window.innerWidth, sonY = window.innerHeight;
+  /* Ekran boyu degisince sayfalari yeniden hesapla.
+
+     Adres cubugu gizlenince ekran ~60-90px uzuyor; sayfa olculeri kurulum
+     anindaki yukseklige gore hesaplandigi icin cerceveleme kayiyor. Pencere
+     artik bottom:0 ile ekrani kapladigindan arada bant gorunmuyor, bu yuzden
+     yeniden kurmayi acele etmiyoruz: boyut oturduktan 450ms sonra ve gecis
+     animasyonu bitmisken yapiyoruz. Ayni sayfada kalmak icin indeks
+     korunuyor. */
+  var sonG = window.innerWidth, sonY = window.innerHeight, boyZaman = null;
   window.addEventListener('resize', function () {
-    if (window.innerWidth === sonG && Math.abs(window.innerHeight - sonY) < 200) return;
+    if (window.innerWidth === sonG && Math.abs(window.innerHeight - sonY) < 40) return;
     sonG = window.innerWidth; sonY = window.innerHeight;
-    kurPlanla();
+    clearTimeout(boyZaman);
+    boyZaman = setTimeout(function bekle() {
+      if (animId) { boyZaman = setTimeout(bekle, 200); return; }   // gecis surerken dokunma
+      var kalinan = indeks;
+      kur();
+      if (kalinan > 0 && sayfa.length) {
+        var i = sinirla(kalinan);
+        indeks = -1;
+        gecis(i, true);
+        window.scrollTo({ top: i * sayfaYuk, behavior: 'auto' });
+      }
+    }, 450);
   });
 
   setTimeout(kurPlanla, 2000);
